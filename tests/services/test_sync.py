@@ -4,7 +4,7 @@ import duckdb
 
 from needledrop.connectors.apple_models import LibraryAlbum, LibrarySong
 from needledrop.db.duckdb_store import connect, init_schema
-from needledrop.services.sync import sync_library
+from needledrop.services.sync import diff_sync, sync_library
 
 
 def _seed_mb(con):
@@ -123,3 +123,21 @@ def test_sync_matches_track_by_isrc():
         "WHERE li.service_item_id = 'l.s1'"
     ).fetchone()
     assert row == ("isrc", "gid-karma")
+
+
+def test_diff_sync_returns_latest_completed_run_summary():
+    con = _db()
+    sync_library(FakeConnector(albums=[
+        LibraryAlbum(id="l.a1", name="OK Computer", artist_name="Radiohead", upc="0724385522123")
+    ]), con, now=datetime(2026, 6, 1, 10, 0, 0))
+    sync_library(FakeConnector(albums=[
+        LibraryAlbum(id="l.a1", name="OK Computer", artist_name="Radiohead", upc="0724385522123"),
+        LibraryAlbum(id="l.a2", name="Kid A", artist_name="Radiohead"),
+    ]), con, now=datetime(2026, 6, 15, 12, 0, 0))
+    diff = diff_sync(con)
+    assert diff == {"added": 1, "removed": 0, "present": 2}
+
+
+def test_diff_sync_no_runs_returns_empty():
+    con = _db()
+    assert diff_sync(con) == {}
