@@ -53,6 +53,11 @@ def create_server(
     and returns its summary dict. It is injected (rather than built here) so the
     server stays decoupled from credentials and the network, and so tests can
     stub it. If it is None, `trigger_sync` raises.
+
+    All tools (and `sync_runner`) share this single `con`. That is safe only
+    under the default stdio transport, which handles requests sequentially: a
+    DuckDB Python connection is not safe for concurrent use, so switching to a
+    concurrent transport (HTTP/SSE) would require a per-request connection.
     """
     mcp = FastMCP(name="needledrop")
 

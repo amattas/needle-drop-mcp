@@ -335,7 +335,12 @@ def list_unmatched(con: duckdb.DuckDBPyConnection) -> list[dict]:
 
 
 def search_library(con: duckdb.DuckDBPyConnection, query: str) -> list[dict]:
-    """Case-insensitive substring search over present album & track titles."""
+    """Case-insensitive substring search over present album & track titles.
+
+    `query` is interpolated into a SQL LIKE pattern, so ``%`` and ``_`` act as
+    wildcards rather than literals and an empty string matches every present
+    item. This permissive matching is intentional for a read-only search tool.
+    """
     rows = con.execute(
         "SELECT li.id, li.item_type, COALESCE(al.title, tr.title) AS title, "
         "li.match_method "
