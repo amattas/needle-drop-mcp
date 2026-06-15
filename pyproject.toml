@@ -24,6 +24,9 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest", "ruff"]
 
+[project.scripts]
+needledrop = "needledrop.cli:main"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/needledrop"]
 
