@@ -288,3 +288,53 @@ def test_upsert_artist_name_dedup_does_not_collide_with_id_matched():
     name_only = upsert_artist(con, canonical_name="Radiohead")
     assert name_only == with_mbid
     assert con.execute("SELECT count(*) FROM artists").fetchone()[0] == 1
+
+
+from needledrop.db.repository import get_findings, save_cleanup_findings
+from needledrop.models.enums import FindingSeverity, FindingType
+from needledrop.models.findings import CleanupFinding, Recommendation
+
+
+def test_save_and_get_findings_roundtrip():
+    con = _con()
+    finding = CleanupFinding(
+        finding_type=FindingType.DUPLICATE_ALBUM,
+        severity=FindingSeverity.LOW,
+        entity_id=7,
+        description="You own 2 versions of 'Dookie'.",
+        recommendation=Recommendation(action="review_duplicates", payload={"n": 2}),
+    )
+    save_cleanup_findings(con, [finding])
+    got = get_findings(con)
+    assert len(got) == 1
+    assert got[0].finding_type == FindingType.DUPLICATE_ALBUM
+    assert got[0].description == "You own 2 versions of 'Dookie'."
+    assert got[0].recommendation.action == "review_duplicates"
+    assert got[0].recommendation.payload == {"n": 2}
+
+
+def test_save_replaces_open_findings():
+    con = _con()
+    save_cleanup_findings(con, [CleanupFinding(
+        finding_type=FindingType.DUPLICATE_ALBUM, severity=FindingSeverity.LOW, description="old"
+    )])
+    save_cleanup_findings(con, [CleanupFinding(
+        finding_type=FindingType.DUPLICATE_ALBUM, severity=FindingSeverity.LOW, description="new"
+    )])
+    descriptions = [f.description for f in get_findings(con)]
+    assert descriptions == ["new"]
+
+
+def test_save_respects_ignored_finding_across_scans():
+    con = _con()
+    save_cleanup_findings(con, [CleanupFinding(
+        finding_type=FindingType.COMPILATION_POLLUTION, severity=FindingSeverity.INFO,
+        description="'Now 100' is a compilation.",
+    )])
+    fid = get_findings(con)[0].id
+    con.execute("UPDATE cleanup_findings SET ignored_at = now() WHERE id = ?", [fid])
+    save_cleanup_findings(con, [CleanupFinding(
+        finding_type=FindingType.COMPILATION_POLLUTION, severity=FindingSeverity.INFO,
+        description="'Now 100' is a compilation.",
+    )])
+    assert get_findings(con) == []

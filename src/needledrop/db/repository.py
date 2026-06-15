@@ -11,6 +11,9 @@ from datetime import datetime
 
 import duckdb
 
+from needledrop.models.enums import FindingSeverity, FindingType
+from needledrop.models.findings import CleanupFinding, Recommendation
+
 
 def _dump_external_ids(external_ids: dict[str, str] | None) -> str:
     return json.dumps(external_ids or {}, sort_keys=True)
@@ -308,3 +311,69 @@ def get_library_albums(con: duckdb.DuckDBPyConnection) -> list[dict]:
         }
         for r in rows
     ]
+
+
+def save_cleanup_findings(con: duckdb.DuckDBPyConnection, findings: list[CleanupFinding]) -> None:
+    """Replace the open (unresolved, unignored) findings with a fresh scan's results.
+
+    Findings whose (type, description) the user already resolved or ignored are
+    NOT re-inserted, so prior decisions survive a re-scan.
+    """
+    con.execute(
+        "DELETE FROM cleanup_findings WHERE resolved_at IS NULL AND ignored_at IS NULL"
+    )
+    suppressed = {
+        (row[0], row[1])
+        for row in con.execute(
+            "SELECT finding_type, description FROM cleanup_findings "
+            "WHERE resolved_at IS NOT NULL OR ignored_at IS NOT NULL"
+        ).fetchall()
+    }
+    for finding in findings:
+        if (finding.finding_type.value, finding.description) in suppressed:
+            continue
+        recommendation_json = json.dumps(
+            finding.recommendation.model_dump() if finding.recommendation else None,
+            sort_keys=True,
+            default=str,
+        )
+        con.execute(
+            "INSERT INTO cleanup_findings "
+            "(finding_type, severity, entity_id, description, recommendation_json) "
+            "VALUES (?, ?, ?, ?, ?)",
+            [finding.finding_type.value, finding.severity.value, finding.entity_id,
+             finding.description, recommendation_json],
+        )
+
+
+def get_findings(
+    con: duckdb.DuckDBPyConnection, *, include_closed: bool = False
+) -> list[CleanupFinding]:
+    """Read findings as CleanupFinding objects (open ones only, unless include_closed)."""
+    sql = (
+        "SELECT id, finding_type, severity, entity_id, description, recommendation_json, "
+        "resolved_at, ignored_at FROM cleanup_findings"
+    )
+    if not include_closed:
+        sql += " WHERE resolved_at IS NULL AND ignored_at IS NULL"
+    sql += " ORDER BY id"
+    findings: list[CleanupFinding] = []
+    for row in con.execute(sql).fetchall():
+        recommendation = None
+        if row[5]:
+            data = json.loads(row[5])
+            if data:
+                recommendation = Recommendation(**data)
+        findings.append(
+            CleanupFinding(
+                id=row[0],
+                finding_type=FindingType(row[1]),
+                severity=FindingSeverity(row[2]),
+                entity_id=row[3],
+                description=row[4],
+                recommendation=recommendation,
+                resolved_at=row[6],
+                ignored_at=row[7],
+            )
+        )
+    return findings
