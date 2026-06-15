@@ -19,7 +19,9 @@ def _db():
     con.execute("CREATE TABLE mb_release_group_secondary_type_join "
                 "(release_group INTEGER, secondary_type INTEGER)")
     con.execute("INSERT INTO mb_release_group_primary_type VALUES (1, 'Album'), (2, 'Single')")
-    con.execute("INSERT INTO mb_release_group_secondary_type VALUES (5, 'Live'), (6, 'Compilation')")
+    con.execute(
+        "INSERT INTO mb_release_group_secondary_type VALUES (5, 'Live'), (6, 'Compilation')"
+    )
     con.execute("INSERT INTO mb_artist VALUES (1, 'gid-lp', 'Linkin Park', 'Linkin Park')")
     con.execute("INSERT INTO mb_artist_credit_name VALUES (10, 0, 1, 'Linkin Park', '')")
     con.execute("INSERT INTO mb_release_group VALUES (100, 'rg-ht', 'Hybrid Theory', 10, 1)")
@@ -32,8 +34,10 @@ def _db():
 def _own_album(con, *, apple_id, title, rg_mbid):
     album_id = upsert_album(con, title=title, release_group_mbid=rg_mbid,
                             external_ids={"apple": apple_id})
-    record_library_item(con, service="apple_music", service_item_id=apple_id, item_type="album",
-                        canonical_id=album_id, match_method="upc", seen_at=datetime(2026, 6, 15, 12, 0, 0))
+    record_library_item(
+        con, service="apple_music", service_item_id=apple_id, item_type="album",
+        canonical_id=album_id, match_method="upc", seen_at=datetime(2026, 6, 15, 12, 0, 0),
+    )
 
 
 def test_finds_unowned_studio_album_by_owned_artist():

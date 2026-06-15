@@ -19,15 +19,19 @@ def _db():
     con.execute("CREATE TABLE mb_release_group_secondary_type (id INTEGER, name VARCHAR)")
     con.execute("CREATE TABLE mb_release_group_secondary_type_join "
                 "(release_group INTEGER, secondary_type INTEGER)")
-    con.execute("INSERT INTO mb_release_group_secondary_type VALUES (1, 'Compilation'), (2, 'Soundtrack')")
+    con.execute(
+        "INSERT INTO mb_release_group_secondary_type VALUES (1, 'Compilation'), (2, 'Soundtrack')"
+    )
     return con
 
 
 def _own_album(con, *, apple_id, title, rg_mbid):
     album_id = upsert_album(con, title=title, release_group_mbid=rg_mbid,
                             external_ids={"apple": apple_id})
-    record_library_item(con, service="apple_music", service_item_id=apple_id, item_type="album",
-                        canonical_id=album_id, match_method="upc", seen_at=datetime(2026, 6, 15, 12, 0, 0))
+    record_library_item(
+        con, service="apple_music", service_item_id=apple_id, item_type="album",
+        canonical_id=album_id, match_method="upc", seen_at=datetime(2026, 6, 15, 12, 0, 0),
+    )
 
 
 def test_flags_compilation_secondary_type():
@@ -42,8 +46,10 @@ def test_flags_compilation_secondary_type():
 
 def test_flags_various_artists_credit():
     con = _db()
-    con.execute("INSERT INTO mb_artist VALUES (99, '%s', 'Various Artists', 'Various Artists')"
-                % VARIOUS_ARTISTS_GID)
+    gid = VARIOUS_ARTISTS_GID
+    con.execute(
+        f"INSERT INTO mb_artist VALUES (99, '{gid}', 'Various Artists', 'Various Artists')"
+    )
     con.execute("INSERT INTO mb_artist_credit_name VALUES (60, 0, 99, 'Various Artists', '')")
     con.execute("INSERT INTO mb_release_group VALUES (11, 'rg-va', 'Movie OST', 60, 1)")
     _own_album(con, apple_id="l.2", title="Movie OST", rg_mbid="rg-va")

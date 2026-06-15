@@ -4,16 +4,20 @@ from datetime import datetime
 from needledrop.db.duckdb_store import connect, init_schema
 from needledrop.db.repository import (
     complete_sync_run,
+    get_findings,
     get_library_albums,
     get_library_summary,
     mark_unseen_removed,
     record_library_item,
+    save_cleanup_findings,
     save_match_candidates,
     start_sync_run,
     upsert_album,
     upsert_artist,
     upsert_track,
 )
+from needledrop.models.enums import FindingSeverity, FindingType
+from needledrop.models.findings import CleanupFinding, Recommendation
 
 
 def _con():
@@ -288,11 +292,6 @@ def test_upsert_artist_name_dedup_does_not_collide_with_id_matched():
     name_only = upsert_artist(con, canonical_name="Radiohead")
     assert name_only == with_mbid
     assert con.execute("SELECT count(*) FROM artists").fetchone()[0] == 1
-
-
-from needledrop.db.repository import get_findings, save_cleanup_findings
-from needledrop.models.enums import FindingSeverity, FindingType
-from needledrop.models.findings import CleanupFinding, Recommendation
 
 
 def test_save_and_get_findings_roundtrip():

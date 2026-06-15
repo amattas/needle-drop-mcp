@@ -26,7 +26,9 @@ def _own_album(con, *, apple_id, title, rg_mbid, version_class):
 def test_finds_two_editions_of_one_release_group():
     con = _db()
     _own_album(con, apple_id="l.1", title="Dookie", rg_mbid="rg-dookie", version_class="standard")
-    _own_album(con, apple_id="l.2", title="Dookie (Deluxe)", rg_mbid="rg-dookie", version_class="deluxe")
+    _own_album(
+        con, apple_id="l.2", title="Dookie (Deluxe)", rg_mbid="rg-dookie", version_class="deluxe"
+    )
     findings = find_duplicate_albums(con)
     assert len(findings) == 1
     assert findings[0].finding_type == FindingType.DUPLICATE_ALBUM
