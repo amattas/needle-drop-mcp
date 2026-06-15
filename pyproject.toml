@@ -19,6 +19,7 @@ dependencies = [
     "rich",
     "typer",
     "keyring",
+    "pyjwt[crypto]",
 ]
 
 [project.optional-dependencies]
