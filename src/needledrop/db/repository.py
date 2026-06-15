@@ -214,3 +214,36 @@ def save_match_candidates(
             "VALUES (?, ?, ?, ?, ?, 'pending')",
             [library_item_id, c["candidate_mbid"], c["candidate_kind"], c["score"], c["method"]],
         )
+
+
+def start_sync_run(con: duckdb.DuckDBPyConnection, *, service: str, started_at: datetime) -> int:
+    """Open a sync run (status 'running'); returns its id."""
+    return con.execute(
+        "INSERT INTO sync_runs (service, started_at, status, summary_json) "
+        "VALUES (?, ?, 'running', '{}') RETURNING id",
+        [service, started_at],
+    ).fetchone()[0]
+
+
+def complete_sync_run(
+    con: duckdb.DuckDBPyConnection, *, run_id: int, completed_at: datetime, summary: dict
+) -> None:
+    """Mark a sync run completed with a summary."""
+    con.execute(
+        "UPDATE sync_runs SET completed_at = ?, status = 'completed', summary_json = ? WHERE id = ?",
+        [completed_at, json.dumps(summary, sort_keys=True), run_id],
+    )
+
+
+def mark_unseen_removed(
+    con: duckdb.DuckDBPyConnection, *, service: str, run_started_at: datetime
+) -> int:
+    """Mark still-present items not seen during this run as removed; returns the count."""
+    rows = con.execute(
+        "UPDATE library_items SET status = 'removed' "
+        "WHERE service = ? AND status = 'present' "
+        "AND (last_seen_at IS NULL OR last_seen_at < ?) "
+        "RETURNING id",
+        [service, run_started_at],
+    ).fetchall()
+    return len(rows)

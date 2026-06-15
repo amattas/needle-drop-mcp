@@ -166,3 +166,47 @@ def test_save_match_candidates_empty_is_noop():
     assert con.execute(
         "SELECT count(*) FROM match_candidates WHERE library_item_id = ?", [item_id]
     ).fetchone()[0] == 0
+
+
+import json as _json
+
+from needledrop.db.repository import (
+    complete_sync_run,
+    mark_unseen_removed,
+    start_sync_run,
+)
+
+
+def test_sync_run_lifecycle():
+    con = _con()
+    started = datetime(2026, 6, 15, 12, 0, 0)
+    run_id = start_sync_run(con, service="apple_music", started_at=started)
+    assert con.execute(
+        "SELECT status FROM sync_runs WHERE id = ?", [run_id]
+    ).fetchone()[0] == "running"
+
+    completed = datetime(2026, 6, 15, 12, 5, 0)
+    complete_sync_run(con, run_id=run_id, completed_at=completed, summary={"albums": 3})
+    row = con.execute(
+        "SELECT status, completed_at, summary_json FROM sync_runs WHERE id = ?", [run_id]
+    ).fetchone()
+    assert row[0] == "completed"
+    assert row[1] == completed
+    assert _json.loads(row[2]) == {"albums": 3}
+
+
+def test_mark_unseen_removed():
+    con = _con()
+    old = datetime(2026, 6, 1, 10, 0, 0)
+    now = datetime(2026, 6, 15, 12, 0, 0)
+    stale = record_library_item(
+        con, service="apple_music", service_item_id="l.gone", item_type="album", seen_at=old,
+    )
+    fresh = record_library_item(
+        con, service="apple_music", service_item_id="l.here", item_type="album", seen_at=now,
+    )
+    removed_count = mark_unseen_removed(con, service="apple_music", run_started_at=now)
+    assert removed_count == 1
+    statuses = dict(con.execute("SELECT id, status FROM library_items").fetchall())
+    assert statuses[stale] == "removed"
+    assert statuses[fresh] == "present"
