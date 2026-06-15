@@ -313,6 +313,46 @@ def get_library_albums(con: duckdb.DuckDBPyConnection) -> list[dict]:
     ]
 
 
+def list_unmatched(con: duckdb.DuckDBPyConnection) -> list[dict]:
+    """Present library items with no MusicBrainz match, with a resolved display title.
+
+    `canonical_id` is polymorphic (album or track by item_type), so the title is
+    pulled from whichever canonical table the item points at.
+    """
+    rows = con.execute(
+        "SELECT li.id, li.item_type, li.service_item_id, "
+        "COALESCE(al.title, tr.title) AS title "
+        "FROM library_items li "
+        "LEFT JOIN albums al ON li.item_type = 'album' AND li.canonical_id = al.id "
+        "LEFT JOIN tracks tr ON li.item_type = 'track' AND li.canonical_id = tr.id "
+        "WHERE li.status = 'present' AND li.match_method = 'none' "
+        "ORDER BY title"
+    ).fetchall()
+    return [
+        {"id": r[0], "item_type": r[1], "service_item_id": r[2], "title": r[3]}
+        for r in rows
+    ]
+
+
+def search_library(con: duckdb.DuckDBPyConnection, query: str) -> list[dict]:
+    """Case-insensitive substring search over present album & track titles."""
+    rows = con.execute(
+        "SELECT li.id, li.item_type, COALESCE(al.title, tr.title) AS title, "
+        "li.match_method "
+        "FROM library_items li "
+        "LEFT JOIN albums al ON li.item_type = 'album' AND li.canonical_id = al.id "
+        "LEFT JOIN tracks tr ON li.item_type = 'track' AND li.canonical_id = tr.id "
+        "WHERE li.status = 'present' "
+        "AND lower(COALESCE(al.title, tr.title)) LIKE '%' || lower(?) || '%' "
+        "ORDER BY title",
+        [query],
+    ).fetchall()
+    return [
+        {"id": r[0], "item_type": r[1], "title": r[2], "match_method": r[3]}
+        for r in rows
+    ]
+
+
 def save_cleanup_findings(con: duckdb.DuckDBPyConnection, findings: list[CleanupFinding]) -> None:
     """Replace the open (unresolved, unignored) findings with a fresh scan's results.
 

@@ -7,10 +7,12 @@ from needledrop.db.repository import (
     get_findings,
     get_library_albums,
     get_library_summary,
+    list_unmatched,
     mark_unseen_removed,
     record_library_item,
     save_cleanup_findings,
     save_match_candidates,
+    search_library,
     start_sync_run,
     upsert_album,
     upsert_artist,
@@ -337,3 +339,74 @@ def test_save_respects_ignored_finding_across_scans():
         description="'Now 100' is a compilation.",
     )])
     assert get_findings(con) == []
+
+
+def _seed_titled_items(con):
+    """Two albums + one track as present library items with mixed match state."""
+    con.execute("INSERT INTO artists (canonical_name) VALUES ('Green Day')")
+    artist_id = con.execute("SELECT id FROM artists").fetchone()[0]
+    con.execute(
+        "INSERT INTO albums (artist_id, title, release_group_mbid) "
+        "VALUES (?, 'Dookie', 'rg-dookie')",
+        [artist_id],
+    )
+    con.execute(
+        "INSERT INTO albums (artist_id, title) VALUES (?, 'Untagged Bootleg')",
+        [artist_id],
+    )
+    con.execute(
+        "INSERT INTO tracks (artist_id, title) VALUES (?, 'Basket Case')",
+        [artist_id],
+    )
+    dookie_id = con.execute("SELECT id FROM albums WHERE title = 'Dookie'").fetchone()[0]
+    bootleg_id = con.execute(
+        "SELECT id FROM albums WHERE title = 'Untagged Bootleg'"
+    ).fetchone()[0]
+    track_id = con.execute("SELECT id FROM tracks WHERE title = 'Basket Case'").fetchone()[0]
+    # Matched album, unmatched album, matched track.
+    con.execute(
+        "INSERT INTO library_items "
+        "(service, service_item_id, item_type, canonical_id, match_method, status) "
+        "VALUES ('apple_music', 'l.dookie', 'album', ?, 'upc', 'present')",
+        [dookie_id],
+    )
+    con.execute(
+        "INSERT INTO library_items "
+        "(service, service_item_id, item_type, canonical_id, match_method, status) "
+        "VALUES ('apple_music', 'l.bootleg', 'album', ?, 'none', 'present')",
+        [bootleg_id],
+    )
+    con.execute(
+        "INSERT INTO library_items "
+        "(service, service_item_id, item_type, canonical_id, match_method, status) "
+        "VALUES ('apple_music', 'l.basket', 'track', ?, 'fuzzy', 'present')",
+        [track_id],
+    )
+
+
+def test_list_unmatched_returns_only_unmatched_present_items(tmp_path):
+    con = connect(tmp_path / "library.duckdb")
+    init_schema(con)
+    _seed_titled_items(con)
+    rows = list_unmatched(con)
+    assert [r["title"] for r in rows] == ["Untagged Bootleg"]
+    assert rows[0]["item_type"] == "album"
+    assert rows[0]["service_item_id"] == "l.bootleg"
+
+
+def test_search_library_matches_titles_case_insensitively(tmp_path):
+    con = connect(tmp_path / "library.duckdb")
+    init_schema(con)
+    _seed_titled_items(con)
+    rows = search_library(con, "case")  # lowercase query matches 'Basket Case'
+    assert [r["title"] for r in rows] == ["Basket Case"]
+    assert rows[0]["item_type"] == "track"
+    assert rows[0]["match_method"] == "fuzzy"
+
+
+def test_search_library_spans_albums_and_tracks(tmp_path):
+    con = connect(tmp_path / "library.duckdb")
+    init_schema(con)
+    _seed_titled_items(con)
+    titles = {r["title"] for r in search_library(con, "")}  # empty query matches all three titles
+    assert titles == {"Dookie", "Untagged Bootleg", "Basket Case"}
