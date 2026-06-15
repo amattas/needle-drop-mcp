@@ -1,7 +1,5 @@
 from datetime import datetime
 
-import duckdb
-
 from needledrop.connectors.apple_models import LibraryAlbum, LibrarySong
 from needledrop.db.duckdb_store import connect, init_schema
 from needledrop.services.sync import diff_sync, sync_library
@@ -12,7 +10,8 @@ def _seed_mb(con):
     con.execute("CREATE TABLE mb_artist_credit (id INTEGER, name VARCHAR)")
     con.execute(
         "CREATE TABLE mb_artist_credit_name "
-        "(artist_credit INTEGER, position INTEGER, artist INTEGER, name VARCHAR, join_phrase VARCHAR)"
+        "(artist_credit INTEGER, position INTEGER, artist INTEGER, "
+        "name VARCHAR, join_phrase VARCHAR)"
     )
     con.execute(
         "CREATE TABLE mb_release_group "

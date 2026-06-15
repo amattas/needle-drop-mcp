@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 import typer
 
 from needledrop.config import load_settings
 from needledrop.connectors.apple_auth import run_auth_helper
+from needledrop.connectors.apple_music import AppleMusicConnector
 from needledrop.connectors.apple_token import (
     load_credentials,
     make_developer_token,
     store_developer_credentials,
 )
+from needledrop.db.duckdb_store import connect
 from needledrop.musicbrainz.importer import import_musicbrainz
+from needledrop.services.sync import sync_library
 
 app = typer.Typer(help="NeedleDrop — intelligent music library management", no_args_is_help=True)
 mb_app = typer.Typer(help="MusicBrainz authority data", no_args_is_help=True)
@@ -57,6 +61,19 @@ def apple_login() -> None:
     settings = load_settings()
     run_auth_helper(developer_token, port=settings.auth_port)
     typer.echo("Authorized — Music User Token stored.")
+
+
+@app.command("sync")
+def sync() -> None:
+    """Pull the Apple Music library, match it against MusicBrainz, and persist it."""
+    settings = load_settings()
+    con = connect(settings.db_path)
+    connector = AppleMusicConnector.from_keystore()
+    summary = sync_library(connector, con, now=datetime.now())
+    typer.echo(
+        f"Synced: {summary['added']} added, {summary['removed']} removed, "
+        f"{summary['present']} present."
+    )
 
 
 def main() -> None:
