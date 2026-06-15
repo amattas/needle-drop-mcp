@@ -34,9 +34,17 @@ def apply_migrations(con: duckdb.DuckDBPyConnection, migrations_dir: str | Path)
         version = path.stem
         if version in applied:
             continue
-        for statement in _split_statements(path.read_text(encoding="utf-8")):
-            con.execute(statement)
-        con.execute("INSERT INTO schema_migrations (version) VALUES (?)", [version])
+        # Apply each migration atomically: its DDL and the bookkeeping row commit
+        # together, so a mid-migration failure leaves no partial schema to re-attempt.
+        con.execute("BEGIN TRANSACTION")
+        try:
+            for statement in _split_statements(path.read_text(encoding="utf-8")):
+                con.execute(statement)
+            con.execute("INSERT INTO schema_migrations (version) VALUES (?)", [version])
+            con.execute("COMMIT")
+        except Exception:
+            con.execute("ROLLBACK")
+            raise
         newly_applied.append(version)
     return newly_applied
 

@@ -42,3 +42,27 @@ def test_no_migrations_dir_entries_is_noop(tmp_path):
     empty_dir = tmp_path / "migrations"
     empty_dir.mkdir()
     assert apply_migrations(con, empty_dir) == []
+
+
+def test_failed_migration_rolls_back(tmp_path):
+    import duckdb
+    import pytest
+
+    con = connect(tmp_path / "library.duckdb")
+    init_schema(con)
+    migrations_dir = tmp_path / "migrations"
+    migrations_dir.mkdir()
+    # The second statement re-adds an existing column -> error mid-migration.
+    (migrations_dir / "0001_bad.sql").write_text(
+        "ALTER TABLE artists ADD COLUMN note VARCHAR;\n"
+        "ALTER TABLE artists ADD COLUMN note VARCHAR;"
+    )
+
+    with pytest.raises(duckdb.Error):
+        apply_migrations(con, migrations_dir)
+
+    # Nothing recorded and the first statement was rolled back (no `note` column).
+    recorded = con.execute("SELECT count(*) FROM schema_migrations").fetchone()[0]
+    assert recorded == 0
+    columns = [row[1] for row in con.execute("PRAGMA table_info('artists')").fetchall()]
+    assert "note" not in columns
