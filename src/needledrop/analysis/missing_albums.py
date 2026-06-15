@@ -42,7 +42,10 @@ ORDER BY ar.name, rg.name
 
 def find_missing_core_albums(con: duckdb.DuckDBPyConnection) -> list[CleanupFinding]:
     """Studio albums (Album primary type, non-compilation/live) by owned artists, not owned."""
-    rows = con.execute(_QUERY, [_VARIOUS_ARTISTS_GID]).fetchall()
+    try:
+        rows = con.execute(_QUERY, [_VARIOUS_ARTISTS_GID]).fetchall()
+    except duckdb.CatalogException:
+        return []
     return [
         CleanupFinding(
             finding_type=FindingType.MISSING_CORE_ALBUM,

@@ -1,0 +1,156 @@
+import asyncio
+
+from fastmcp import Client
+
+from needledrop.db.duckdb_store import connect, init_schema
+from needledrop.mcp_server import create_server
+
+
+def _seed(con):
+    con.execute("INSERT INTO artists (canonical_name) VALUES ('Green Day')")
+    artist_id = con.execute("SELECT id FROM artists").fetchone()[0]
+    con.execute(
+        "INSERT INTO albums (artist_id, title, release_group_mbid, version_class) "
+        "VALUES (?, 'Dookie', 'rg-dookie', 'standard')",
+        [artist_id],
+    )
+    con.execute(
+        "INSERT INTO albums (artist_id, title, release_group_mbid, version_class) "
+        "VALUES (?, 'Dookie (Deluxe)', 'rg-dookie', 'deluxe')",
+        [artist_id],
+    )
+    con.execute(
+        "INSERT INTO albums (artist_id, title) VALUES (?, 'Untagged Bootleg')",
+        [artist_id],
+    )
+    standard = con.execute("SELECT id FROM albums WHERE title = 'Dookie'").fetchone()[0]
+    deluxe = con.execute(
+        "SELECT id FROM albums WHERE title = 'Dookie (Deluxe)'"
+    ).fetchone()[0]
+    bootleg = con.execute(
+        "SELECT id FROM albums WHERE title = 'Untagged Bootleg'"
+    ).fetchone()[0]
+    for sid, cid, method in [
+        ("l.std", standard, "upc"),
+        ("l.dlx", deluxe, "upc"),
+        ("l.boot", bootleg, "none"),
+    ]:
+        con.execute(
+            "INSERT INTO library_items "
+            "(service, service_item_id, item_type, canonical_id, match_method, status) "
+            "VALUES ('apple_music', ?, 'album', ?, ?, 'present')",
+            [sid, cid, method],
+        )
+
+
+def _fresh_con():
+    con = connect(":memory:")
+    init_schema(con)
+    return con
+
+
+def _call(server, tool, args=None):
+    """Invoke a tool through an in-memory MCP client; return result.data."""
+    async def go():
+        async with Client(server) as client:
+            result = await client.call_tool(tool, args or {})
+            return result.data
+
+    return asyncio.run(go())
+
+
+def test_server_exposes_expected_tools():
+    con = _fresh_con()
+    server = create_server(con)
+
+    async def list_names():
+        async with Client(server) as client:
+            return {t.name for t in await client.list_tools()}
+
+    names = asyncio.run(list_names())
+    assert {
+        "get_library_summary",
+        "list_albums",
+        "find_duplicate_albums",
+        "find_compilation_pollution",
+        "find_missing_core_albums",
+        "generate_cleanup_report",
+        "list_unmatched",
+        "search_library",
+        "trigger_sync",
+    }.issubset(names)
+
+
+def test_get_library_summary_tool_counts_items():
+    con = _fresh_con()
+    _seed(con)
+    summary = _call(create_server(con), "get_library_summary")
+    assert summary["album"] == 3
+    assert summary["matched"] == 2
+    assert summary["unmatched"] == 1
+
+
+def test_list_albums_tool_returns_present_albums():
+    con = _fresh_con()
+    _seed(con)
+    albums = _call(create_server(con), "list_albums")
+    titles = {a["title"] for a in albums}
+    assert {"Dookie", "Dookie (Deluxe)", "Untagged Bootleg"}.issubset(titles)
+
+
+def test_find_duplicate_albums_tool_reports_release_group_dupes():
+    con = _fresh_con()
+    _seed(con)
+    findings = _call(create_server(con), "find_duplicate_albums")
+    assert len(findings) == 1
+    assert findings[0]["finding_type"] == "duplicate_album"
+
+
+def test_list_unmatched_tool_returns_unmatched_only():
+    con = _fresh_con()
+    _seed(con)
+    rows = _call(create_server(con), "list_unmatched")
+    assert [r["title"] for r in rows] == ["Untagged Bootleg"]
+
+
+def test_search_library_tool_filters_by_title():
+    con = _fresh_con()
+    _seed(con)
+    rows = _call(create_server(con), "search_library", {"query": "deluxe"})
+    assert [r["title"] for r in rows] == ["Dookie (Deluxe)"]
+
+
+def test_generate_cleanup_report_tool_runs_scan_and_returns_findings():
+    con = _fresh_con()
+    _seed(con)
+    report = _call(create_server(con), "generate_cleanup_report")
+    assert report["counts"]["duplicate_album"] == 1
+    descriptions = {f["description"] for f in report["findings"]}
+    assert any("versions of 'Dookie'" in d for d in descriptions)
+
+
+def test_trigger_sync_tool_invokes_injected_runner():
+    con = _fresh_con()
+    calls = []
+
+    def runner():
+        calls.append(True)
+        return {"added": 5, "removed": 1, "present": 42}
+
+    summary = _call(create_server(con, sync_runner=runner), "trigger_sync")
+    assert calls == [True]
+    assert summary == {"added": 5, "removed": 1, "present": 42}
+
+
+def test_trigger_sync_without_runner_reports_error():
+    con = _fresh_con()
+    server = create_server(con)
+    import pytest
+    from fastmcp.exceptions import ToolError
+
+    async def go():
+        async with Client(server) as client:
+            await client.call_tool("trigger_sync", {})
+
+    with pytest.raises(ToolError):
+        asyncio.run(go())
