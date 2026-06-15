@@ -1,8 +1,10 @@
 import asyncio
+from datetime import datetime
 
 from fastmcp import Client
 
 from needledrop.db.duckdb_store import connect, init_schema
+from needledrop.db.repository import record_library_item, upsert_album
 from needledrop.mcp_server import create_server
 
 
@@ -140,6 +142,42 @@ def test_trigger_sync_tool_invokes_injected_runner():
     summary = _call(create_server(con, sync_runner=runner), "trigger_sync")
     assert calls == [True]
     assert summary == {"added": 5, "removed": 1, "present": 42}
+
+
+def test_find_compilation_pollution_tool_with_mb_data():
+    con = _fresh_con()
+    # Seed mb_* tables mirroring tests/analysis/test_compilation_pollution.py
+    con.execute("CREATE TABLE mb_artist (id INTEGER, gid VARCHAR, name VARCHAR, sort_name VARCHAR)")
+    con.execute(
+        "CREATE TABLE mb_artist_credit_name "
+        "(artist_credit INTEGER, position INTEGER, artist INTEGER, "
+        "name VARCHAR, join_phrase VARCHAR)"
+    )
+    con.execute(
+        "CREATE TABLE mb_release_group "
+        "(id INTEGER, gid VARCHAR, name VARCHAR, artist_credit INTEGER, type INTEGER)"
+    )
+    con.execute("CREATE TABLE mb_release_group_secondary_type (id INTEGER, name VARCHAR)")
+    con.execute(
+        "CREATE TABLE mb_release_group_secondary_type_join "
+        "(release_group INTEGER, secondary_type INTEGER)"
+    )
+    con.execute(
+        "INSERT INTO mb_release_group_secondary_type VALUES (1, 'Compilation'), (2, 'Soundtrack')"
+    )
+    # A compilation release group
+    con.execute("INSERT INTO mb_release_group VALUES (10, 'rg-comp', 'Now 100', 50, 1)")
+    con.execute("INSERT INTO mb_release_group_secondary_type_join VALUES (10, 1)")
+    # Own the album whose release_group_mbid points to the compilation
+    album_id = upsert_album(con, title="Now 100", release_group_mbid="rg-comp",
+                            external_ids={"apple": "l.comp1"})
+    record_library_item(
+        con, service="apple_music", service_item_id="l.comp1", item_type="album",
+        canonical_id=album_id, match_method="upc", seen_at=datetime(2026, 6, 15, 12, 0, 0),
+    )
+    findings = _call(create_server(con), "find_compilation_pollution")
+    assert len(findings) >= 1
+    assert findings[0]["finding_type"] == "compilation_pollution"
 
 
 def test_trigger_sync_without_runner_reports_error():

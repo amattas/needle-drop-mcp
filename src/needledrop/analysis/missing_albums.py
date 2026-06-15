@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import duckdb
 
+from needledrop.db.duckdb_store import table_exists
 from needledrop.models.enums import FindingSeverity, FindingType
 from needledrop.models.findings import CleanupFinding, Recommendation
 
@@ -42,10 +43,9 @@ ORDER BY ar.name, rg.name
 
 def find_missing_core_albums(con: duckdb.DuckDBPyConnection) -> list[CleanupFinding]:
     """Studio albums (Album primary type, non-compilation/live) by owned artists, not owned."""
-    try:
-        rows = con.execute(_QUERY, [_VARIOUS_ARTISTS_GID]).fetchall()
-    except duckdb.CatalogException:
+    if not table_exists(con, "mb_release_group"):
         return []
+    rows = con.execute(_QUERY, [_VARIOUS_ARTISTS_GID]).fetchall()
     return [
         CleanupFinding(
             finding_type=FindingType.MISSING_CORE_ALBUM,

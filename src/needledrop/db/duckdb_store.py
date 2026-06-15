@@ -49,6 +49,15 @@ def apply_migrations(con: duckdb.DuckDBPyConnection, migrations_dir: str | Path)
     return newly_applied
 
 
+def table_exists(con: duckdb.DuckDBPyConnection, table_name: str) -> bool:
+    """True if a table with this name exists in the database's main schema."""
+    count = con.execute(
+        "SELECT count(*) FROM information_schema.tables WHERE table_name = ?",
+        [table_name],
+    ).fetchone()[0]
+    return count > 0
+
+
 def open_db(db_path: str | Path) -> duckdb.DuckDBPyConnection:
     """Connect AND ensure the canonical schema exists (baseline + pending migrations).
 
