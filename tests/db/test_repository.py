@@ -519,6 +519,59 @@ def test_resolve_match_links_recording_for_track(tmp_path):
     ).fetchone()[0] == "rg-good"
 
 
+def test_get_review_queue_enriches_recording_names_when_mb_present(tmp_path):
+    con = connect(tmp_path / "library.duckdb")
+    init_schema(con)
+    _seed_review_item(
+        con, item_type="track", canonical_title="Idioteque", service_item_id="l.idio"
+    )
+    con.execute("CREATE TABLE mb_recording (id INTEGER, gid VARCHAR, name VARCHAR)")
+    con.execute("INSERT INTO mb_recording VALUES (1, 'rg-good', 'Idioteque (MB)')")
+    queue = get_review_queue(con)
+    names = {c["candidate_mbid"]: c["name"] for c in queue[0]["candidates"]}
+    assert names["rg-good"] == "Idioteque (MB)"
+    assert names["rg-meh"] is None
+
+
+def test_resolve_match_rejects_candidate_kind_mismatch(tmp_path):
+    import pytest
+
+    con = connect(tmp_path / "library.duckdb")
+    init_schema(con)
+    # Album item, but with a 'recording'-kind candidate -> kind mismatch.
+    con.execute("INSERT INTO albums (title) VALUES ('Amnesiac')")
+    canonical_id = con.execute(
+        "SELECT id FROM albums WHERE title = 'Amnesiac'"
+    ).fetchone()[0]
+    con.execute(
+        "INSERT INTO library_items "
+        "(service, service_item_id, item_type, canonical_id, match_method, status) "
+        "VALUES ('apple_music', 'l.amne', 'album', ?, 'none', 'present')",
+        [canonical_id],
+    )
+    item_id = con.execute(
+        "SELECT id FROM library_items WHERE service_item_id = 'l.amne'"
+    ).fetchone()[0]
+    con.execute(
+        "INSERT INTO match_candidates "
+        "(library_item_id, candidate_mbid, candidate_kind, score, method, status) "
+        "VALUES (?, 'rec-x', 'recording', 0.9, 'fuzzy', 'pending')",
+        [item_id],
+    )
+    bad = con.execute(
+        "SELECT id FROM match_candidates WHERE candidate_mbid = 'rec-x'"
+    ).fetchone()[0]
+    with pytest.raises(ValueError):
+        resolve_match(con, candidate_id=bad)
+    # Mismatch raises before the transaction -> nothing changed.
+    assert con.execute(
+        "SELECT release_group_mbid FROM albums WHERE id = ?", [canonical_id]
+    ).fetchone()[0] is None
+    assert con.execute(
+        "SELECT status FROM match_candidates WHERE id = ?", [bad]
+    ).fetchone()[0] == "pending"
+
+
 def test_resolve_match_rejects_unknown_or_nonpending(tmp_path):
     import pytest
 
