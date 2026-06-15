@@ -22,7 +22,7 @@ needledrop-mcp/
 ├── src/needledrop/
 │   ├── __init__.py                      # package version
 │   ├── config.py                        # non-secret settings (Settings)
-│   ├── secrets.py                       # SecretBackend protocol + KeyringBackend
+│   ├── keystore.py                       # SecretBackend protocol + KeyringBackend
 │   ├── models/
 │   │   ├── __init__.py
 │   │   ├── enums.py                     # all domain enums (single source)
@@ -38,7 +38,7 @@ needledrop-mcp/
 └── tests/
     ├── test_version.py
     ├── test_config.py
-    ├── test_secrets.py
+    ├── test_keystore.py
     ├── models/
     │   ├── test_enums.py
     │   ├── test_canonical.py
@@ -259,7 +259,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Runtime configuration. Secrets are NOT stored here — see needledrop.secrets."""
+    """Runtime configuration. Secrets are NOT stored here — see needledrop.keystore."""
 
     model_config = SettingsConfigDict(
         env_prefix="NEEDLEDROP_",
@@ -295,16 +295,16 @@ git commit -m "feat: add non-secret settings module"
 ### Task 3: Secrets backend
 
 **Files:**
-- Create: `src/needledrop/secrets.py`
-- Test: `tests/test_secrets.py`
+- Create: `src/needledrop/keystore.py`
+- Test: `tests/test_keystore.py`
 
 - [ ] **Step 1: Write the failing test**
 
-`tests/test_secrets.py`:
+`tests/test_keystore.py`:
 
 ```python
-import needledrop.secrets as secrets_mod
-from needledrop.secrets import KeyringBackend, get_backend, set_backend
+import needledrop.keystore as keystore_mod
+from needledrop.keystore import KeyringBackend, get_backend, set_backend
 
 
 class InMemoryBackend:
@@ -344,8 +344,8 @@ def test_keyring_backend_uses_keyring(monkeypatch):
     def fake_get(service, key):
         return calls.get((service, key))
 
-    monkeypatch.setattr(secrets_mod.keyring, "set_password", fake_set)
-    monkeypatch.setattr(secrets_mod.keyring, "get_password", fake_get)
+    monkeypatch.setattr(keystore_mod.keyring, "set_password", fake_set)
+    monkeypatch.setattr(keystore_mod.keyring, "get_password", fake_get)
 
     backend = KeyringBackend(service_name="needledrop-test")
     backend.set("team_id", "TEAM123")
@@ -355,12 +355,12 @@ def test_keyring_backend_uses_keyring(monkeypatch):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `pytest tests/test_secrets.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'needledrop.secrets'`.
+Run: `pytest tests/test_keystore.py -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'needledrop.keystore'`.
 
 - [ ] **Step 3: Write the implementation**
 
-`src/needledrop/secrets.py`:
+`src/needledrop/keystore.py`:
 
 ```python
 """Pluggable secret storage. Default backend is the OS keyring; a 1Password
@@ -418,13 +418,13 @@ def set_backend(backend: SecretBackend) -> None:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `pytest tests/test_secrets.py -v`
+Run: `pytest tests/test_keystore.py -v`
 Expected: PASS (2 tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/needledrop/secrets.py tests/test_secrets.py
+git add src/needledrop/keystore.py tests/test_keystore.py
 git commit -m "feat: add pluggable secrets backend with keyring default"
 ```
 
@@ -1301,7 +1301,7 @@ git commit -m "test: cover schema migration runner"
 - §4.2 canonical entities → `artists`/`albums`/`tracks` tables + `CanonicalArtist/Album/Track` models. ✓ (`version_class` present; `version_group_key` = `release_group_mbid` column.)
 - §4.3 library/operational tables → `library_items`, `match_candidates`, `playlists`, `sync_runs`, `cleanup_findings` + `LibraryItem`, `Playlist`, `MatchCandidate` models. ✓
 - §4.4 finding types incl. `unmatched_item` → `FindingType` enum. ✓
-- §9.1 secrets backend (keyring default, pluggable) + non-secret config → `secrets.py`, `config.py`. ✓
+- §9.1 secrets backend (keyring default, pluggable) + non-secret config → `keystore.py`, `config.py`. ✓
 - §9.3 env/tooling (mamba 3.13, ruff, pytest) → Prerequisites + pyproject. ✓
 - Deferred-by-design and noted: `CatalogAlbum`/`CatalogTrack` (Plan 6), `cli.py` entry point (Plan 5).
 

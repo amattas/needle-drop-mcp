@@ -183,7 +183,7 @@ needledrop-mcp/
 │   ├── mcp_server.py              # FastMCP app — public tool surface
 │   ├── cli.py                     # typer: auth / mb import / sync / scan / serve / status   (new)
 │   ├── config.py                  # non-secret config (DB path, ports, thresholds)           (new)
-│   ├── secrets.py                 # pluggable secret backend (keyring default, 1Password)     (new)
+│   ├── keystore.py                 # pluggable secret backend (keyring default, 1Password)     (new)
 │   │
 │   ├── connectors/
 │   │   ├── base.py                # abstract MusicConnector interface
@@ -300,7 +300,7 @@ FastMCP app exposing the tool set (§7) over stdio.
 ## 9. Cross-cutting concerns
 
 ### 9.1 Secrets & config
-`secrets.py` exposes a backend interface; the default is `keyring`. Stored:
+`keystore.py` exposes a backend interface; the default is `keyring`. Stored:
 Apple `.p8` contents (or a path reference), Team ID, Key ID, and the Music User
 Token. A 1Password backend implements the same interface. `config.py` holds
 non-secret settings — DuckDB path, auth-helper port, fuzzy-match threshold — in a
@@ -346,7 +346,7 @@ keyring-setup guidance, not a place for live credentials.
 
 ## 11. Build sequence
 
-1. Project scaffold: `pyproject.toml`, env, `config.py`, `secrets.py`, DuckDB
+1. Project scaffold: `pyproject.toml`, env, `config.py`, `keystore.py`, DuckDB
    schema + migrations, models.
 2. `musicbrainz/` import pipeline → `mb_*` tables.
 3. `connectors/apple_auth.py` + `connectors/apple_music.py` (read paths) with
