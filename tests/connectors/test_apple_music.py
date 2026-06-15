@@ -88,3 +88,30 @@ def test_missing_user_token_raises_for_library():
     with pytest.raises(RuntimeError) as exc:
         connector.get_storefront()
     assert "login" in str(exc.value)
+
+
+def test_iter_library_albums_requests_include_catalog():
+    seen = {}
+
+    def handler(request):
+        seen["include"] = request.url.params.get("include")
+        return httpx.Response(200, json={"data": [
+            {"id": "l.a", "attributes": {"name": "A"},
+             "relationships": {"catalog": {"data": [{"id": "1", "type": "albums",
+                                                     "attributes": {"upc": "U1"}}]}}}
+        ]})
+
+    albums = list(_connector(handler).iter_library_albums())
+    assert seen["include"] == "catalog"
+    assert albums[0].upc == "U1"
+
+
+def test_iter_library_playlists_does_not_request_include():
+    seen = {}
+
+    def handler(request):
+        seen["include"] = request.url.params.get("include")
+        return httpx.Response(200, json={"data": [{"id": "p.1", "attributes": {"name": "Faves"}}]})
+
+    list(_connector(handler).iter_library_playlists())
+    assert seen["include"] is None

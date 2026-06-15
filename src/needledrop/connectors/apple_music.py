@@ -63,8 +63,11 @@ class AppleMusicConnector(MusicConnector):
         response.raise_for_status()
         return response.json()["data"][0]["id"]
 
-    def _paginate(self, path: str) -> Iterator[dict]:
-        next_url: str | None = f"{path}?limit={self.LIBRARY_PAGE_LIMIT}"
+    def _paginate(self, path: str, *, include: str | None = None) -> Iterator[dict]:
+        query = f"?limit={self.LIBRARY_PAGE_LIMIT}"
+        if include:
+            query += f"&include={include}"
+        next_url: str | None = path + query
         while next_url:
             response = self._client.get(next_url, headers=self._headers(user=True))
             response.raise_for_status()
@@ -73,11 +76,11 @@ class AppleMusicConnector(MusicConnector):
             next_url = body.get("next")
 
     def iter_library_albums(self) -> Iterator[LibraryAlbum]:
-        for resource in self._paginate("/v1/me/library/albums"):
+        for resource in self._paginate("/v1/me/library/albums", include="catalog"):
             yield LibraryAlbum.from_api(resource)
 
     def iter_library_songs(self) -> Iterator[LibrarySong]:
-        for resource in self._paginate("/v1/me/library/songs"):
+        for resource in self._paginate("/v1/me/library/songs", include="catalog"):
             yield LibrarySong.from_api(resource)
 
     def iter_library_playlists(self) -> Iterator[LibraryPlaylist]:
