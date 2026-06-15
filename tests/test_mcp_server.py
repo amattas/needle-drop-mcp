@@ -1,7 +1,9 @@
 import asyncio
 from datetime import datetime
 
+import pytest
 from fastmcp import Client
+from fastmcp.exceptions import ToolError
 
 from needledrop.db.duckdb_store import connect, init_schema
 from needledrop.db.repository import record_library_item, upsert_album
@@ -183,8 +185,6 @@ def test_find_compilation_pollution_tool_with_mb_data():
 def test_trigger_sync_without_runner_reports_error():
     con = _fresh_con()
     server = create_server(con)
-    import pytest
-    from fastmcp.exceptions import ToolError
 
     async def go():
         async with Client(server) as client:
@@ -192,3 +192,49 @@ def test_trigger_sync_without_runner_reports_error():
 
     with pytest.raises(ToolError):
         asyncio.run(go())
+
+
+def test_find_missing_core_albums_tool_with_mb_data():
+    con = _fresh_con()
+    # Seed mb_* tables mirroring tests/analysis/test_missing_albums.py:
+    # an artist with two studio albums; own only one → expect one missing-core-album finding.
+    con.execute("CREATE TABLE mb_artist (id INTEGER, gid VARCHAR, name VARCHAR, sort_name VARCHAR)")
+    con.execute(
+        "CREATE TABLE mb_artist_credit_name "
+        "(artist_credit INTEGER, position INTEGER, artist INTEGER, "
+        "name VARCHAR, join_phrase VARCHAR)"
+    )
+    con.execute(
+        "CREATE TABLE mb_release_group "
+        "(id INTEGER, gid VARCHAR, name VARCHAR, artist_credit INTEGER, type INTEGER)"
+    )
+    con.execute("CREATE TABLE mb_release_group_primary_type (id INTEGER, name VARCHAR)")
+    con.execute("CREATE TABLE mb_release_group_secondary_type (id INTEGER, name VARCHAR)")
+    con.execute(
+        "CREATE TABLE mb_release_group_secondary_type_join "
+        "(release_group INTEGER, secondary_type INTEGER)"
+    )
+    con.execute("INSERT INTO mb_release_group_primary_type VALUES (1, 'Album'), (2, 'Single')")
+    con.execute(
+        "INSERT INTO mb_release_group_secondary_type VALUES (5, 'Live'), (6, 'Compilation')"
+    )
+    con.execute("INSERT INTO mb_artist VALUES (1, 'gid-lp', 'Linkin Park', 'Linkin Park')")
+    con.execute("INSERT INTO mb_artist_credit_name VALUES (10, 0, 1, 'Linkin Park', '')")
+    con.execute("INSERT INTO mb_release_group VALUES (100, 'rg-ht', 'Hybrid Theory', 10, 1)")
+    con.execute("INSERT INTO mb_release_group VALUES (101, 'rg-met', 'Meteora', 10, 1)")
+    # Own only Hybrid Theory; Meteora is unowned → should appear as missing
+    album_id = upsert_album(
+        con, title="Hybrid Theory", release_group_mbid="rg-ht", external_ids={"apple": "l.ht"}
+    )
+    record_library_item(
+        con,
+        service="apple_music",
+        service_item_id="l.ht",
+        item_type="album",
+        canonical_id=album_id,
+        match_method="upc",
+        seen_at=datetime(2026, 6, 15, 12, 0, 0),
+    )
+    findings = _call(create_server(con), "find_missing_core_albums")
+    assert len(findings) >= 1
+    assert findings[0]["finding_type"] == "missing_core_album"

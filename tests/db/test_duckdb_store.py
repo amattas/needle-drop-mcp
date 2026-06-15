@@ -1,4 +1,4 @@
-from needledrop.db.duckdb_store import connect, init_schema, open_db
+from needledrop.db.duckdb_store import connect, init_schema, open_db, table_exists
 
 EXPECTED_TABLES = {
     "artists",
@@ -61,6 +61,13 @@ def test_library_items_unique_constraint(tmp_path):
             "INSERT INTO library_items (service, service_item_id, item_type) "
             "VALUES ('apple_music', 'l.1', 'album')"
         )
+
+
+def test_table_exists_detects_base_tables(tmp_path):
+    con = connect(tmp_path / "library.duckdb")
+    init_schema(con)
+    assert table_exists(con, "artists") is True
+    assert table_exists(con, "mb_release_group") is False
 
 
 def test_open_db_bootstraps_schema_on_fresh_db(tmp_path):

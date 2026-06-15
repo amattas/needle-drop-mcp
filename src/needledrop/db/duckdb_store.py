@@ -52,7 +52,8 @@ def apply_migrations(con: duckdb.DuckDBPyConnection, migrations_dir: str | Path)
 def table_exists(con: duckdb.DuckDBPyConnection, table_name: str) -> bool:
     """True if a table with this name exists in the database's main schema."""
     count = con.execute(
-        "SELECT count(*) FROM information_schema.tables WHERE table_name = ?",
+        "SELECT count(*) FROM information_schema.tables "
+        "WHERE table_name = ? AND table_schema = 'main' AND table_type = 'BASE TABLE'",
         [table_name],
     ).fetchone()[0]
     return count > 0
