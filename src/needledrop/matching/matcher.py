@@ -96,7 +96,7 @@ def match_track(
 
 
 def _score_by_artist(
-    con, *, artist_name, target, sql, normalize_candidate
+    con: duckdb.DuckDBPyConnection, *, artist_name, target, sql, normalize_candidate
 ) -> list[tuple[float, str]]:
     """Fetch the named artist's entities and rapidfuzz-score their titles."""
     if not artist_name:

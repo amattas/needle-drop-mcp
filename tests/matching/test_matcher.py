@@ -40,6 +40,11 @@ def con():
     )
     c.execute("INSERT INTO mb_recording VALUES (5000, 'gid-karma', 'Karma Police', 10, 261000)")
     c.execute("INSERT INTO mb_isrc VALUES (1, 5000, 'GBAYE9700116')")
+    # An artist whose MB name carries diacritics, for accent-stripping coverage.
+    c.execute("INSERT INTO mb_artist VALUES (2, 'gid-sigurros', 'Sigur Rós', 'Sigur Ros')")
+    c.execute("INSERT INTO mb_artist_credit VALUES (11, 'Sigur Rós')")
+    c.execute("INSERT INTO mb_artist_credit_name VALUES (11, 0, 2, 'Sigur Rós', '')")
+    c.execute("INSERT INTO mb_release_group VALUES (102, 'gid-takk', 'Takk...', 11, 1)")
     return c
 
 
@@ -59,9 +64,17 @@ def test_match_album_fuzzy_ignores_edition_noise(con):
     assert result.confidence >= 0.87
 
 
-def test_match_album_accented_artist_matches(con):
+def test_match_album_case_folded_artist(con):
+    # Lowercase library artist still resolves against MB's title-cased name.
     result = match_album(con, AlbumQuery(title="Kid A", artist_name="radiohead"))
     assert result.mbid == "gid-kida"
+
+
+def test_match_album_accent_stripped_artist(con):
+    # MB stores "Sigur Rós"; an accent-free library query must still resolve
+    # (fold_accents in Python must agree with strip_accents in SQL).
+    result = match_album(con, AlbumQuery(title="Takk...", artist_name="sigur ros"))
+    assert result.mbid == "gid-takk"
 
 
 def test_match_album_no_match_returns_candidates(con):
