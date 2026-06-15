@@ -26,7 +26,9 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
 <script src="https://js-cdn.music.apple.com/musickit/v3/musickit.js"></script>
 <script>
 document.addEventListener('musickitloaded', function () {{
-  MusicKit.configure({{ developerToken: '{developer_token}', app: {{ name: '{app_name}', build: '1.0' }} }});
+  MusicKit.configure({{
+    developerToken: '{developer_token}', app: {{ name: '{app_name}', build: '1.0' }},
+  }});
   MusicKit.getInstance().authorize().then(function (musicUserToken) {{
     document.getElementById('status').textContent = 'Authorized. You can close this tab.';
     return fetch('{callback_path}', {{

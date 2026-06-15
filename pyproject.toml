@@ -40,6 +40,8 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+# B008: typer.Option/Argument in function defaults is idiomatic typer — not a real call
+ignore = ["B008"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
