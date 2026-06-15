@@ -20,7 +20,7 @@ class MatchCandidate(BaseModel):
 class MatchResult(BaseModel):
     """Outcome of matching one library item against the MB authority."""
 
-    mbid: str | None
+    mbid: str | None = None
     confidence: float
     method: MatchMethod
     candidates: list[MatchCandidate] = Field(default_factory=list)

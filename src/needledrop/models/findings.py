@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -12,7 +13,7 @@ from needledrop.models.enums import FindingSeverity, FindingType
 class Recommendation(BaseModel):
     action: str
     detail: str | None = None
-    payload: dict[str, str] = Field(default_factory=dict)
+    payload: dict[str, Any] = Field(default_factory=dict)
 
 
 class CleanupFinding(BaseModel):
