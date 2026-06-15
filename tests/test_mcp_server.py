@@ -81,6 +81,9 @@ def test_server_exposes_expected_tools():
         "generate_cleanup_report",
         "list_unmatched",
         "search_library",
+        "list_review_queue",
+        "resolve_match",
+        "reject_match",
         "trigger_sync",
     }.issubset(names)
 
