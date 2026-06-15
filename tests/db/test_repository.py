@@ -128,3 +128,41 @@ def test_record_library_item_upserts_preserving_added_at():
     assert row[0] == t1
     assert row[1] == t2
     assert row[2] == 42 and row[3] == 1.0 and row[4] == "upc"
+
+
+from needledrop.db.repository import save_match_candidates
+
+
+def test_save_match_candidates_replaces_pending():
+    con = _con()
+    t = datetime(2026, 6, 15, 12, 0, 0)
+    item_id = record_library_item(
+        con, service="apple_music", service_item_id="l.a1", item_type="album", seen_at=t,
+    )
+    save_match_candidates(con, library_item_id=item_id, candidates=[
+        {"candidate_mbid": "rg-1", "candidate_kind": "release_group", "score": 0.8, "method": "fuzzy"},
+        {"candidate_mbid": "rg-2", "candidate_kind": "release_group", "score": 0.6, "method": "fuzzy"},
+    ])
+    assert con.execute(
+        "SELECT count(*) FROM match_candidates WHERE library_item_id = ?", [item_id]
+    ).fetchone()[0] == 2
+
+    save_match_candidates(con, library_item_id=item_id, candidates=[
+        {"candidate_mbid": "rg-3", "candidate_kind": "release_group", "score": 0.9, "method": "fuzzy"},
+    ])
+    rows = con.execute(
+        "SELECT candidate_mbid, status FROM match_candidates WHERE library_item_id = ?", [item_id]
+    ).fetchall()
+    assert rows == [("rg-3", "pending")]
+
+
+def test_save_match_candidates_empty_is_noop():
+    con = _con()
+    t = datetime(2026, 6, 15, 12, 0, 0)
+    item_id = record_library_item(
+        con, service="apple_music", service_item_id="l.a1", item_type="album", seen_at=t,
+    )
+    save_match_candidates(con, library_item_id=item_id, candidates=[])
+    assert con.execute(
+        "SELECT count(*) FROM match_candidates WHERE library_item_id = ?", [item_id]
+    ).fetchone()[0] == 0

@@ -191,3 +191,26 @@ def record_library_item(
         [service, service_item_id, item_type, canonical_id, match_confidence, match_method,
          seen_at, seen_at],
     ).fetchone()[0]
+
+
+def save_match_candidates(
+    con: duckdb.DuckDBPyConnection,
+    *,
+    library_item_id: int,
+    candidates: list[dict],
+) -> None:
+    """Replace the pending review-queue candidates for a library item.
+
+    Each candidate dict: candidate_mbid, candidate_kind, score, method.
+    """
+    con.execute(
+        "DELETE FROM match_candidates WHERE library_item_id = ? AND status = 'pending'",
+        [library_item_id],
+    )
+    for c in candidates:
+        con.execute(
+            "INSERT INTO match_candidates "
+            "(library_item_id, candidate_mbid, candidate_kind, score, method, status) "
+            "VALUES (?, ?, ?, ?, ?, 'pending')",
+            [library_item_id, c["candidate_mbid"], c["candidate_kind"], c["score"], c["method"]],
+        )
