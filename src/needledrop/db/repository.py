@@ -230,7 +230,8 @@ def complete_sync_run(
 ) -> None:
     """Mark a sync run completed with a summary."""
     con.execute(
-        "UPDATE sync_runs SET completed_at = ?, status = 'completed', summary_json = ? WHERE id = ?",
+        "UPDATE sync_runs "
+        "SET completed_at = ?, status = 'completed', summary_json = ? WHERE id = ?",
         [completed_at, json.dumps(summary, sort_keys=True), run_id],
     )
 
@@ -247,3 +248,43 @@ def mark_unseen_removed(
         [service, run_started_at],
     ).fetchall()
     return len(rows)
+
+
+def get_library_summary(con: duckdb.DuckDBPyConnection) -> dict:
+    """Counts of present library items by type, plus matched/unmatched totals."""
+    summary: dict[str, int] = {}
+    for item_type, count in con.execute(
+        "SELECT item_type, count(*) FROM library_items WHERE status = 'present' GROUP BY item_type"
+    ).fetchall():
+        summary[item_type] = count
+    matched, unmatched = con.execute(
+        "SELECT "
+        "count(*) FILTER (WHERE match_method <> 'none'), "
+        "count(*) FILTER (WHERE match_method = 'none') "
+        "FROM library_items WHERE status = 'present'"
+    ).fetchone()
+    summary["matched"] = matched
+    summary["unmatched"] = unmatched
+    return summary
+
+
+def get_library_albums(con: duckdb.DuckDBPyConnection) -> list[dict]:
+    """Present library albums joined to their canonical album rows."""
+    rows = con.execute(
+        "SELECT a.id, a.title, a.release_group_mbid, a.version_class, "
+        "li.match_method, li.match_confidence "
+        "FROM library_items li JOIN albums a ON li.canonical_id = a.id "
+        "WHERE li.status = 'present' AND li.item_type = 'album' "
+        "ORDER BY a.title"
+    ).fetchall()
+    return [
+        {
+            "id": r[0],
+            "title": r[1],
+            "release_group_mbid": r[2],
+            "version_class": r[3],
+            "match_method": r[4],
+            "match_confidence": r[5],
+        }
+        for r in rows
+    ]

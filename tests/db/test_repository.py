@@ -1,7 +1,19 @@
+import json as _json
 from datetime import datetime
 
 from needledrop.db.duckdb_store import connect, init_schema
-from needledrop.db.repository import record_library_item, upsert_album, upsert_artist, upsert_track
+from needledrop.db.repository import (
+    complete_sync_run,
+    get_library_albums,
+    get_library_summary,
+    mark_unseen_removed,
+    record_library_item,
+    save_match_candidates,
+    start_sync_run,
+    upsert_album,
+    upsert_artist,
+    upsert_track,
+)
 
 
 def _con():
@@ -130,9 +142,6 @@ def test_record_library_item_upserts_preserving_added_at():
     assert row[2] == 42 and row[3] == 1.0 and row[4] == "upc"
 
 
-from needledrop.db.repository import save_match_candidates
-
-
 def test_save_match_candidates_replaces_pending():
     con = _con()
     t = datetime(2026, 6, 15, 12, 0, 0)
@@ -140,15 +149,18 @@ def test_save_match_candidates_replaces_pending():
         con, service="apple_music", service_item_id="l.a1", item_type="album", seen_at=t,
     )
     save_match_candidates(con, library_item_id=item_id, candidates=[
-        {"candidate_mbid": "rg-1", "candidate_kind": "release_group", "score": 0.8, "method": "fuzzy"},
-        {"candidate_mbid": "rg-2", "candidate_kind": "release_group", "score": 0.6, "method": "fuzzy"},
+        {"candidate_mbid": "rg-1", "candidate_kind": "release_group", "score": 0.8,
+         "method": "fuzzy"},
+        {"candidate_mbid": "rg-2", "candidate_kind": "release_group", "score": 0.6,
+         "method": "fuzzy"},
     ])
     assert con.execute(
         "SELECT count(*) FROM match_candidates WHERE library_item_id = ?", [item_id]
     ).fetchone()[0] == 2
 
     save_match_candidates(con, library_item_id=item_id, candidates=[
-        {"candidate_mbid": "rg-3", "candidate_kind": "release_group", "score": 0.9, "method": "fuzzy"},
+        {"candidate_mbid": "rg-3", "candidate_kind": "release_group", "score": 0.9,
+         "method": "fuzzy"},
     ])
     rows = con.execute(
         "SELECT candidate_mbid, status FROM match_candidates WHERE library_item_id = ?", [item_id]
@@ -166,15 +178,6 @@ def test_save_match_candidates_empty_is_noop():
     assert con.execute(
         "SELECT count(*) FROM match_candidates WHERE library_item_id = ?", [item_id]
     ).fetchone()[0] == 0
-
-
-import json as _json
-
-from needledrop.db.repository import (
-    complete_sync_run,
-    mark_unseen_removed,
-    start_sync_run,
-)
 
 
 def test_sync_run_lifecycle():
@@ -210,3 +213,40 @@ def test_mark_unseen_removed():
     statuses = dict(con.execute("SELECT id, status FROM library_items").fetchall())
     assert statuses[stale] == "removed"
     assert statuses[fresh] == "present"
+
+
+def _seed_album(con, *, apple_id, title, rg_mbid, method, seen_at):
+    artist_id = upsert_artist(con, canonical_name="Radiohead", mbid="mbid-r")
+    album_id = upsert_album(
+        con, title=title, artist_id=artist_id, release_group_mbid=rg_mbid,
+        external_ids={"apple": apple_id},
+    )
+    record_library_item(
+        con, service="apple_music", service_item_id=apple_id, item_type="album",
+        canonical_id=album_id, match_confidence=1.0, match_method=method, seen_at=seen_at,
+    )
+
+
+def test_get_library_summary_counts_present_by_type_and_match():
+    con = _con()
+    t = datetime(2026, 6, 15, 12, 0, 0)
+    _seed_album(
+        con, apple_id="l.a1", title="OK Computer", rg_mbid="rg1", method="upc", seen_at=t
+    )
+    _seed_album(con, apple_id="l.a2", title="Kid A", rg_mbid="rg2", method="none", seen_at=t)
+    summary = get_library_summary(con)
+    assert summary["album"] == 2
+    assert summary["matched"] == 1
+    assert summary["unmatched"] == 1
+
+
+def test_get_library_albums_returns_present_albums():
+    con = _con()
+    t = datetime(2026, 6, 15, 12, 0, 0)
+    _seed_album(
+        con, apple_id="l.a1", title="OK Computer", rg_mbid="rg1", method="upc", seen_at=t
+    )
+    albums = get_library_albums(con)
+    assert len(albums) == 1
+    assert albums[0]["title"] == "OK Computer"
+    assert albums[0]["release_group_mbid"] == "rg1"
