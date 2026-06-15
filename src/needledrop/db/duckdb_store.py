@@ -49,6 +49,19 @@ def apply_migrations(con: duckdb.DuckDBPyConnection, migrations_dir: str | Path)
     return newly_applied
 
 
+def open_db(db_path: str | Path) -> duckdb.DuckDBPyConnection:
+    """Connect AND ensure the canonical schema exists (baseline + pending migrations).
+
+    This is the entry point CLI commands should use: `connect` alone opens the
+    file but does not create any tables, so commands that touch the canonical
+    schema (sync, etc.) must bootstrap it first.
+    """
+    con = connect(db_path)
+    init_schema(con)
+    apply_migrations(con, resources.files("needledrop.db").joinpath("migrations"))
+    return con
+
+
 def _split_statements(sql: str) -> list[str]:
     """Split a SQL script into statements, dropping comment-only lines.
 

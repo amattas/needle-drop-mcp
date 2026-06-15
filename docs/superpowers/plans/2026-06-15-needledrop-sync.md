@@ -670,7 +670,7 @@ runner = CliRunner()
 
 def test_sync_command_reports_summary():
     with patch("needledrop.cli.AppleMusicConnector") as connector_cls, \
-         patch("needledrop.cli.connect") as connect_fn, \
+         patch("needledrop.cli.open_db"), \
          patch("needledrop.cli.sync_library") as sync_fn:
         sync_fn.return_value = {"added": 3, "removed": 1, "present": 42}
         result = runner.invoke(app, ["sync"])
@@ -695,9 +695,12 @@ Add these imports near the top of `cli.py` (alongside the existing imports; `loa
 from datetime import datetime
 
 from needledrop.connectors.apple_music import AppleMusicConnector
-from needledrop.db.duckdb_store import connect
+from needledrop.db.duckdb_store import open_db
 from needledrop.services.sync import sync_library
 ```
+
+(`open_db` connects AND bootstraps the canonical schema — `connect` alone leaves
+the tables uncreated, which would crash `sync` on a fresh DB.)
 
 Add the `sync` command (a top-level command on `app`, after the existing `auth`/`mb` wiring, before `def main()`):
 
@@ -706,7 +709,7 @@ Add the `sync` command (a top-level command on `app`, after the existing `auth`/
 def sync() -> None:
     """Pull the Apple Music library, match it against MusicBrainz, and persist it."""
     settings = load_settings()
-    con = connect(settings.db_path)
+    con = open_db(settings.db_path)
     connector = AppleMusicConnector.from_keystore()
     summary = sync_library(connector, con, now=datetime.now())
     typer.echo(

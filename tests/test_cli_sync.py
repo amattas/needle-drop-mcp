@@ -10,7 +10,7 @@ runner = CliRunner()
 def test_sync_command_reports_summary():
     with patch("needledrop.cli.load_settings") as load_settings_mock, \
          patch("needledrop.cli.AppleMusicConnector") as connector_cls, \
-         patch("needledrop.cli.connect"), \
+         patch("needledrop.cli.open_db"), \
          patch("needledrop.cli.sync_library") as sync_fn:
         load_settings_mock.return_value = MagicMock(db_path=":memory:")
         sync_fn.return_value = {"added": 3, "removed": 1, "present": 42}

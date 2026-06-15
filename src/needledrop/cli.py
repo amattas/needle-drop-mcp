@@ -15,7 +15,7 @@ from needledrop.connectors.apple_token import (
     make_developer_token,
     store_developer_credentials,
 )
-from needledrop.db.duckdb_store import connect
+from needledrop.db.duckdb_store import open_db
 from needledrop.musicbrainz.importer import import_musicbrainz
 from needledrop.services.sync import sync_library
 
@@ -67,7 +67,7 @@ def apple_login() -> None:
 def sync() -> None:
     """Pull the Apple Music library, match it against MusicBrainz, and persist it."""
     settings = load_settings()
-    con = connect(settings.db_path)
+    con = open_db(settings.db_path)
     connector = AppleMusicConnector.from_keystore()
     summary = sync_library(connector, con, now=datetime.now())
     typer.echo(
