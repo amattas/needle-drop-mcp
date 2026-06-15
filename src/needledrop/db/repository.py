@@ -98,7 +98,8 @@ def upsert_album(
                 "release_group_mbid = COALESCE(?, release_group_mbid), "
                 "release_mbid = COALESCE(?, release_mbid), "
                 "version_class = COALESCE(?, version_class), external_ids_json = ? WHERE id = ?",
-                [title, artist_id, release_group_mbid, release_mbid, version_class, ext_json, row[0]],
+                [title, artist_id, release_group_mbid, release_mbid, version_class,
+                 ext_json, row[0]],
             )
             return row[0]
 
