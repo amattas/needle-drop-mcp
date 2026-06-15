@@ -6,6 +6,8 @@ import hashlib
 import tarfile
 from pathlib import Path
 
+import httpx
+
 
 def resolve_latest(latest_body: str) -> str:
     """Parse the fullexport `LATEST` file body into the dated directory name."""
@@ -55,3 +57,34 @@ def list_table_files(mbdump_dir: str | Path) -> list[tuple[str, Path]]:
         if p.is_file() and not p.name.isupper():
             out.append((p.name, p))
     return out
+
+
+def download_file(url: str, dest: str | Path, *, client: httpx.Client | None = None) -> Path:
+    """Stream-download `url` to `dest` (creating parent dirs). Raises on HTTP error.
+
+    If `client` is provided the caller owns its lifecycle; otherwise a client is
+    created and closed here. Uses no timeout — exports are large.
+    """
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    owns_client = client is None
+    client = client or httpx.Client(timeout=None, follow_redirects=True)
+    try:
+        with client.stream("GET", url) as response:
+            response.raise_for_status()
+            with open(dest, "wb") as f:
+                for chunk in response.iter_bytes(1024 * 1024):
+                    f.write(chunk)
+    finally:
+        if owns_client:
+            client.close()
+    return dest
+
+
+def extract_tarball(tarball: str | Path, dest_dir: str | Path) -> Path:
+    """Extract a `.tar.bz2` into `dest_dir`; return the path to the `mbdump/` dir."""
+    dest_dir = Path(dest_dir)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(tarball, "r:bz2") as tar:
+        tar.extractall(dest_dir, filter="data")
+    return dest_dir / "mbdump"
