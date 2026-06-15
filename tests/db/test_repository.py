@@ -7,9 +7,12 @@ from needledrop.db.repository import (
     get_findings,
     get_library_albums,
     get_library_summary,
+    get_review_queue,
     list_unmatched,
     mark_unseen_removed,
     record_library_item,
+    reject_match,
+    resolve_match,
     save_cleanup_findings,
     save_match_candidates,
     search_library,
@@ -410,3 +413,140 @@ def test_search_library_spans_albums_and_tracks(tmp_path):
     _seed_titled_items(con)
     titles = {r["title"] for r in search_library(con, "")}  # empty query matches all three titles
     assert titles == {"Dookie", "Untagged Bootleg", "Basket Case"}
+
+
+def _seed_review_item(con, *, item_type="album", canonical_title="Kid A",
+                      service_item_id="l.kida"):
+    """A present, unmatched library item with two pending candidates."""
+    if item_type == "album":
+        con.execute("INSERT INTO albums (title) VALUES (?)", [canonical_title])
+        canonical_id = con.execute(
+            "SELECT id FROM albums WHERE title = ?", [canonical_title]
+        ).fetchone()[0]
+        kind = "release_group"
+    else:
+        con.execute("INSERT INTO tracks (title) VALUES (?)", [canonical_title])
+        canonical_id = con.execute(
+            "SELECT id FROM tracks WHERE title = ?", [canonical_title]
+        ).fetchone()[0]
+        kind = "recording"
+    con.execute(
+        "INSERT INTO library_items "
+        "(service, service_item_id, item_type, canonical_id, match_method, status) "
+        "VALUES ('apple_music', ?, ?, ?, 'none', 'present')",
+        [service_item_id, item_type, canonical_id],
+    )
+    item_id = con.execute(
+        "SELECT id FROM library_items WHERE service_item_id = ?", [service_item_id]
+    ).fetchone()[0]
+    for mbid, score in [("rg-good", 0.81), ("rg-meh", 0.74)]:
+        con.execute(
+            "INSERT INTO match_candidates "
+            "(library_item_id, candidate_mbid, candidate_kind, score, method, status) "
+            "VALUES (?, ?, ?, ?, 'fuzzy', 'pending')",
+            [item_id, mbid, kind, score],
+        )
+    return item_id, canonical_id
+
+
+def test_get_review_queue_lists_items_with_pending_candidates(tmp_path):
+    con = connect(tmp_path / "library.duckdb")
+    init_schema(con)
+    item_id, _ = _seed_review_item(con)
+    queue = get_review_queue(con)
+    assert len(queue) == 1
+    entry = queue[0]
+    assert entry["library_item_id"] == item_id
+    assert entry["item_type"] == "album"
+    assert entry["title"] == "Kid A"
+    assert [c["candidate_mbid"] for c in entry["candidates"]] == ["rg-good", "rg-meh"]
+    assert entry["candidates"][0]["candidate_kind"] == "release_group"
+    assert entry["candidates"][0]["name"] is None
+
+
+def test_get_review_queue_enriches_names_when_mb_present(tmp_path):
+    con = connect(tmp_path / "library.duckdb")
+    init_schema(con)
+    _seed_review_item(con)
+    con.execute("CREATE TABLE mb_release_group (id INTEGER, gid VARCHAR, name VARCHAR)")
+    con.execute("INSERT INTO mb_release_group VALUES (1, 'rg-good', 'Kid A (MB)')")
+    queue = get_review_queue(con)
+    names = {c["candidate_mbid"]: c["name"] for c in queue[0]["candidates"]}
+    assert names["rg-good"] == "Kid A (MB)"
+    assert names["rg-meh"] is None
+
+
+def test_resolve_match_links_canonical_and_flips_statuses(tmp_path):
+    con = connect(tmp_path / "library.duckdb")
+    init_schema(con)
+    item_id, canonical_id = _seed_review_item(con)
+    chosen = con.execute(
+        "SELECT id FROM match_candidates WHERE candidate_mbid = 'rg-good'"
+    ).fetchone()[0]
+    result = resolve_match(con, candidate_id=chosen)
+    assert result == {
+        "library_item_id": item_id,
+        "item_type": "album",
+        "candidate_mbid": "rg-good",
+    }
+    assert con.execute(
+        "SELECT release_group_mbid FROM albums WHERE id = ?", [canonical_id]
+    ).fetchone()[0] == "rg-good"
+    method, conf = con.execute(
+        "SELECT match_method, match_confidence FROM library_items WHERE id = ?", [item_id]
+    ).fetchone()
+    assert method == "manual"
+    assert conf == 1.0
+    statuses = dict(con.execute(
+        "SELECT candidate_mbid, status FROM match_candidates WHERE library_item_id = ?", [item_id]
+    ).fetchall())
+    assert statuses == {"rg-good": "confirmed", "rg-meh": "rejected"}
+    assert get_review_queue(con) == []
+
+
+def test_resolve_match_links_recording_for_track(tmp_path):
+    con = connect(tmp_path / "library.duckdb")
+    init_schema(con)
+    item_id, canonical_id = _seed_review_item(
+        con, item_type="track", canonical_title="Idioteque", service_item_id="l.idio"
+    )
+    chosen = con.execute(
+        "SELECT id FROM match_candidates WHERE candidate_mbid = 'rg-good'"
+    ).fetchone()[0]
+    resolve_match(con, candidate_id=chosen)
+    assert con.execute(
+        "SELECT recording_mbid FROM tracks WHERE id = ?", [canonical_id]
+    ).fetchone()[0] == "rg-good"
+
+
+def test_resolve_match_rejects_unknown_or_nonpending(tmp_path):
+    import pytest
+
+    con = connect(tmp_path / "library.duckdb")
+    init_schema(con)
+    item_id, _ = _seed_review_item(con)
+    with pytest.raises(ValueError):
+        resolve_match(con, candidate_id=99999)
+    chosen = con.execute(
+        "SELECT id FROM match_candidates WHERE candidate_mbid = 'rg-good'"
+    ).fetchone()[0]
+    resolve_match(con, candidate_id=chosen)
+    with pytest.raises(ValueError):
+        resolve_match(con, candidate_id=chosen)
+
+
+def test_reject_match_rejects_all_pending(tmp_path):
+    con = connect(tmp_path / "library.duckdb")
+    init_schema(con)
+    item_id, _ = _seed_review_item(con)
+    rejected = reject_match(con, library_item_id=item_id)
+    assert rejected == 2
+    pending = con.execute(
+        "SELECT count(*) FROM match_candidates "
+        "WHERE library_item_id = ? AND status = 'pending'", [item_id]
+    ).fetchone()[0]
+    assert pending == 0
+    assert con.execute(
+        "SELECT match_method FROM library_items WHERE id = ?", [item_id]
+    ).fetchone()[0] == "none"
+    assert get_review_queue(con) == []

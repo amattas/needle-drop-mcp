@@ -11,6 +11,7 @@ from datetime import datetime
 
 import duckdb
 
+from needledrop.db.duckdb_store import table_exists
 from needledrop.models.enums import FindingSeverity, FindingType
 from needledrop.models.findings import CleanupFinding, Recommendation
 
@@ -389,6 +390,161 @@ def save_cleanup_findings(con: duckdb.DuckDBPyConnection, findings: list[Cleanup
             [finding.finding_type.value, finding.severity.value, finding.entity_id,
              finding.description, recommendation_json],
         )
+
+
+def get_review_queue(con: duckdb.DuckDBPyConnection) -> list[dict]:
+    """Present library items that still have pending match candidates.
+
+    Each entry: library_item_id, item_type, resolved canonical title, current
+    match_method, and the pending candidates (score-desc). Candidate `name` is
+    filled from the mb_* authority tables when present, else None.
+    """
+    rows = con.execute(
+        "SELECT li.id, li.item_type, COALESCE(al.title, tr.title) AS title, li.match_method "
+        "FROM library_items li "
+        "LEFT JOIN albums al ON li.item_type = 'album' AND li.canonical_id = al.id "
+        "LEFT JOIN tracks tr ON li.item_type = 'track' AND li.canonical_id = tr.id "
+        "WHERE li.status = 'present' AND EXISTS ("
+        "  SELECT 1 FROM match_candidates mc "
+        "  WHERE mc.library_item_id = li.id AND mc.status = 'pending') "
+        "ORDER BY title"
+    ).fetchall()
+    queue: list[dict] = []
+    for item_id, item_type, title, match_method in rows:
+        cand_rows = con.execute(
+            "SELECT id, candidate_mbid, candidate_kind, score, method "
+            "FROM match_candidates WHERE library_item_id = ? AND status = 'pending' "
+            "ORDER BY score DESC, id",
+            [item_id],
+        ).fetchall()
+        candidates = [
+            {
+                "candidate_id": c[0],
+                "candidate_mbid": c[1],
+                "candidate_kind": c[2],
+                "score": c[3],
+                "method": c[4],
+                "name": None,
+            }
+            for c in cand_rows
+        ]
+        queue.append(
+            {
+                "library_item_id": item_id,
+                "item_type": item_type,
+                "title": title,
+                "match_method": match_method,
+                "candidates": candidates,
+            }
+        )
+    _enrich_candidate_names(con, queue)
+    return queue
+
+
+def _enrich_candidate_names(con: duckdb.DuckDBPyConnection, queue: list[dict]) -> None:
+    """Fill candidate `name` from mb_* tables (release_group / recording), if present."""
+    by_kind = {"release_group": "mb_release_group", "recording": "mb_recording"}
+    names: dict[str, str] = {}
+    for kind, table in by_kind.items():
+        gids = {
+            c["candidate_mbid"]
+            for entry in queue
+            for c in entry["candidates"]
+            if c["candidate_kind"] == kind
+        }
+        if not gids or not table_exists(con, table):
+            continue
+        placeholders = ", ".join("?" * len(gids))
+        for gid, name in con.execute(
+            f"SELECT gid, name FROM {table} WHERE gid IN ({placeholders})", list(gids)
+        ).fetchall():
+            names[gid] = name
+    for entry in queue:
+        for c in entry["candidates"]:
+            c["name"] = names.get(c["candidate_mbid"])
+
+
+def resolve_match(con: duckdb.DuckDBPyConnection, *, candidate_id: int) -> dict:
+    """Confirm one pending candidate: link the canonical row to its MBID, mark the
+    item manually matched, confirm the choice, reject its siblings — atomically.
+
+    Returns {library_item_id, item_type, candidate_mbid}. Raises ValueError if the
+    candidate is unknown / not pending, the item is missing, the candidate kind does
+    not match the item type, or the item has no canonical row to link.
+    """
+    cand = con.execute(
+        "SELECT library_item_id, candidate_mbid, candidate_kind, status "
+        "FROM match_candidates WHERE id = ?",
+        [candidate_id],
+    ).fetchone()
+    if cand is None:
+        raise ValueError(f"No match candidate with id {candidate_id}.")
+    library_item_id, candidate_mbid, candidate_kind, status = cand
+    if status != "pending":
+        raise ValueError(f"Candidate {candidate_id} is not pending (status={status}).")
+
+    item = con.execute(
+        "SELECT item_type, canonical_id FROM library_items WHERE id = ?",
+        [library_item_id],
+    ).fetchone()
+    if item is None:
+        raise ValueError(f"Library item {library_item_id} not found.")
+    item_type, canonical_id = item
+    expected_kind = {"album": "release_group", "track": "recording"}.get(item_type)
+    if candidate_kind != expected_kind:
+        raise ValueError(
+            f"Candidate kind '{candidate_kind}' cannot resolve a '{item_type}' item."
+        )
+    if canonical_id is None:
+        raise ValueError(f"Library item {library_item_id} has no canonical row to link.")
+
+    con.execute("BEGIN TRANSACTION")
+    try:
+        if item_type == "album":
+            con.execute(
+                "UPDATE albums SET release_group_mbid = ? WHERE id = ?",
+                [candidate_mbid, canonical_id],
+            )
+        else:
+            con.execute(
+                "UPDATE tracks SET recording_mbid = ? WHERE id = ?",
+                [candidate_mbid, canonical_id],
+            )
+        con.execute(
+            "UPDATE library_items SET match_method = 'manual', match_confidence = 1.0 "
+            "WHERE id = ?",
+            [library_item_id],
+        )
+        con.execute(
+            "UPDATE match_candidates SET status = 'confirmed' WHERE id = ?", [candidate_id]
+        )
+        con.execute(
+            "UPDATE match_candidates SET status = 'rejected' "
+            "WHERE library_item_id = ? AND id <> ? AND status = 'pending'",
+            [library_item_id, candidate_id],
+        )
+        con.execute("COMMIT")
+    except Exception:
+        con.execute("ROLLBACK")
+        raise
+    return {
+        "library_item_id": library_item_id,
+        "item_type": item_type,
+        "candidate_mbid": candidate_mbid,
+    }
+
+
+def reject_match(con: duckdb.DuckDBPyConnection, *, library_item_id: int) -> int:
+    """Reject every pending candidate for an item (user declined them); returns the count.
+
+    The item is left unmatched (match_method stays whatever it was, typically 'none').
+    """
+    rows = con.execute(
+        "UPDATE match_candidates SET status = 'rejected' "
+        "WHERE library_item_id = ? AND status = 'pending' RETURNING id",
+        [library_item_id],
+    ).fetchall()
+    return len(rows)
 
 
 def get_findings(
