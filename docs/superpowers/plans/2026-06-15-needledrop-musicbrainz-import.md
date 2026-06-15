@@ -978,7 +978,11 @@ def test_run_import_sequences_and_materializes(tmp_path):
     assert pg.events[0] == "start"
     assert pg.events[1] == "wait_ready"
     assert pg.events[2] == ("run_sql", SCHEMA_BOOTSTRAP_SQL)
-    assert ("run_sql", "-- extensions") in pg.events
+    # DDLs are prefixed with the search-path line, so match on substring.
+    assert any(
+        isinstance(e, tuple) and e[0] == "run_sql" and "-- extensions" in e[1]
+        for e in pg.events
+    )
     assert ("copy", "artist", "/dump/mbdump/artist") in pg.events
     assert "attach" in pg.events
     assert pg.events[-1] == "teardown"
