@@ -16,6 +16,7 @@ from needledrop.connectors.apple_token import (
     store_developer_credentials,
 )
 from needledrop.db.duckdb_store import open_db
+from needledrop.mcp_server import create_server
 from needledrop.musicbrainz.importer import import_musicbrainz
 from needledrop.services.sync import sync_library
 
@@ -74,6 +75,20 @@ def sync() -> None:
         f"Synced: {summary['added']} added, {summary['removed']} removed, "
         f"{summary['present']} present."
     )
+
+
+@app.command("serve")
+def serve() -> None:
+    """Run the read-only MCP server over stdio."""
+    settings = load_settings()
+    con = open_db(settings.db_path)
+
+    def sync_runner() -> dict:
+        connector = AppleMusicConnector.from_keystore()
+        return sync_library(connector, con, now=datetime.now())
+
+    server = create_server(con, sync_runner=sync_runner)
+    server.run(show_banner=False)
 
 
 def main() -> None:
