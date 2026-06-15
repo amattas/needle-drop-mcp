@@ -219,7 +219,9 @@ def test_make_developer_token_has_expected_header_and_claims():
     assert header["kid"] == "KEY0000000"
 
     public_key = serialization.load_pem_private_key(pem.encode(), password=None).public_key()
-    claims = jwt.decode(token, public_key, algorithms=["ES256"])
+    # Pinned past `now` means the token is expired at decode time; we assert the
+    # structural claim values, not live validity.
+    claims = jwt.decode(token, public_key, algorithms=["ES256"], options={"verify_exp": False})
     assert claims["iss"] == "TEAM000000"
     assert claims["iat"] == 1_700_000_000
     assert claims["exp"] == 1_700_000_000 + 3600
