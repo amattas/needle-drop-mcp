@@ -34,7 +34,16 @@ from needledrop.db.repository import (
     get_library_summary as _get_library_summary,
 )
 from needledrop.db.repository import (
+    get_review_queue as _get_review_queue,
+)
+from needledrop.db.repository import (
     list_unmatched as _list_unmatched,
+)
+from needledrop.db.repository import (
+    reject_match as _reject_match,
+)
+from needledrop.db.repository import (
+    resolve_match as _resolve_match,
 )
 from needledrop.db.repository import (
     search_library as _search_library,
@@ -102,6 +111,21 @@ def create_server(
     def search_library(query: str) -> list[dict]:
         """Case-insensitive substring search over present album & track titles."""
         return _search_library(con, query)
+
+    @mcp.tool
+    def list_review_queue() -> list[dict]:
+        """Present library items with pending match candidates awaiting a decision."""
+        return _get_review_queue(con)
+
+    @mcp.tool
+    def resolve_match(candidate_id: int) -> dict:
+        """Confirm a pending candidate (by its candidate_id) as the item's match."""
+        return _resolve_match(con, candidate_id=candidate_id)
+
+    @mcp.tool
+    def reject_match(library_item_id: int) -> dict:
+        """Reject all pending candidates for a library item; returns the count rejected."""
+        return {"rejected": _reject_match(con, library_item_id=library_item_id)}
 
     @mcp.tool
     def trigger_sync() -> dict:

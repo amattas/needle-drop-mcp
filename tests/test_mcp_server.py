@@ -194,6 +194,78 @@ def test_trigger_sync_without_runner_reports_error():
         asyncio.run(go())
 
 
+def _seed_review_queue(con):
+    """A present, unmatched album item with two pending release-group candidates."""
+    con.execute("INSERT INTO albums (title) VALUES ('Kid A')")
+    canonical_id = con.execute("SELECT id FROM albums WHERE title = 'Kid A'").fetchone()[0]
+    con.execute(
+        "INSERT INTO library_items "
+        "(service, service_item_id, item_type, canonical_id, match_method, status) "
+        "VALUES ('apple_music', 'l.kida', 'album', ?, 'none', 'present')",
+        [canonical_id],
+    )
+    item_id = con.execute(
+        "SELECT id FROM library_items WHERE service_item_id = 'l.kida'"
+    ).fetchone()[0]
+    for mbid, score in [("rg-good", 0.81), ("rg-meh", 0.74)]:
+        con.execute(
+            "INSERT INTO match_candidates "
+            "(library_item_id, candidate_mbid, candidate_kind, score, method, status) "
+            "VALUES (?, ?, 'release_group', ?, 'fuzzy', 'pending')",
+            [item_id, mbid, score],
+        )
+    return item_id, canonical_id
+
+
+def test_list_review_queue_tool_returns_pending_items():
+    con = _fresh_con()
+    _seed_review_queue(con)
+    queue = _call(create_server(con), "list_review_queue")
+    assert len(queue) == 1
+    assert queue[0]["title"] == "Kid A"
+    assert [c["candidate_mbid"] for c in queue[0]["candidates"]] == ["rg-good", "rg-meh"]
+
+
+def test_resolve_match_tool_links_and_clears_queue():
+    con = _fresh_con()
+    item_id, canonical_id = _seed_review_queue(con)
+    chosen = con.execute(
+        "SELECT id FROM match_candidates WHERE candidate_mbid = 'rg-good'"
+    ).fetchone()[0]
+    server = create_server(con)
+    result = _call(server, "resolve_match", {"candidate_id": chosen})
+    assert result == {
+        "library_item_id": item_id,
+        "item_type": "album",
+        "candidate_mbid": "rg-good",
+    }
+    assert con.execute(
+        "SELECT release_group_mbid FROM albums WHERE id = ?", [canonical_id]
+    ).fetchone()[0] == "rg-good"
+    assert _call(server, "list_review_queue") == []
+
+
+def test_reject_match_tool_clears_queue():
+    con = _fresh_con()
+    item_id, _ = _seed_review_queue(con)
+    server = create_server(con)
+    result = _call(server, "reject_match", {"library_item_id": item_id})
+    assert result == {"rejected": 2}
+    assert _call(server, "list_review_queue") == []
+
+
+def test_resolve_match_tool_unknown_candidate_errors():
+    con = _fresh_con()
+    _seed_review_queue(con)
+
+    async def go():
+        async with Client(create_server(con)) as client:
+            await client.call_tool("resolve_match", {"candidate_id": 99999})
+
+    with pytest.raises(ToolError):
+        asyncio.run(go())
+
+
 def test_find_missing_core_albums_tool_with_mb_data():
     con = _fresh_con()
     # Seed mb_* tables mirroring tests/analysis/test_missing_albums.py:
