@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from needledrop.musicbrainz.postgres import (
     PostgresSpec,
     copy_table_sql,
