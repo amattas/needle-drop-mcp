@@ -20,7 +20,7 @@ def find_duplicate_albums(con: duckdb.DuckDBPyConnection) -> list[CleanupFinding
     ).fetchall()
     findings: list[CleanupFinding] = []
     for rg_mbid, n, title, album_ids, versions in rows:
-        labels = ", ".join(str(v) for v in versions)
+        labels = ", ".join(sorted(str(v) for v in versions))
         findings.append(
             CleanupFinding(
                 finding_type=FindingType.DUPLICATE_ALBUM,
