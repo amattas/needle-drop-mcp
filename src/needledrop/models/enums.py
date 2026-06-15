@@ -2,25 +2,25 @@
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 
-class Service(str, Enum):
+class Service(StrEnum):
     APPLE_MUSIC = "apple_music"
 
 
-class ItemType(str, Enum):
+class ItemType(StrEnum):
     ALBUM = "album"
     TRACK = "track"
     PLAYLIST = "playlist"
 
 
-class LibraryStatus(str, Enum):
+class LibraryStatus(StrEnum):
     PRESENT = "present"
     REMOVED = "removed"
 
 
-class VersionClass(str, Enum):
+class VersionClass(StrEnum):
     STANDARD = "standard"
     DELUXE = "deluxe"
     EXPANDED = "expanded"
@@ -33,7 +33,7 @@ class VersionClass(str, Enum):
     UNKNOWN = "unknown"
 
 
-class MatchMethod(str, Enum):
+class MatchMethod(StrEnum):
     ISRC = "isrc"
     UPC = "upc"
     FUZZY = "fuzzy"
@@ -41,19 +41,19 @@ class MatchMethod(str, Enum):
     NONE = "none"
 
 
-class MatchStatus(str, Enum):
+class MatchStatus(StrEnum):
     PENDING = "pending"
     CONFIRMED = "confirmed"
     REJECTED = "rejected"
 
 
-class CandidateKind(str, Enum):
+class CandidateKind(StrEnum):
     RELEASE_GROUP = "release_group"
     RECORDING = "recording"
     ARTIST = "artist"
 
 
-class FindingType(str, Enum):
+class FindingType(StrEnum):
     DUPLICATE_ALBUM = "duplicate_album"
     DUPLICATE_TRACK = "duplicate_track"
     PARTIAL_ALBUM = "partial_album"
@@ -64,7 +64,7 @@ class FindingType(str, Enum):
     UNMATCHED_ITEM = "unmatched_item"
 
 
-class FindingSeverity(str, Enum):
+class FindingSeverity(StrEnum):
     INFO = "info"
     LOW = "low"
     MEDIUM = "medium"
