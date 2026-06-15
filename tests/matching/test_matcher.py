@@ -12,7 +12,8 @@ def con():
     c.execute("CREATE TABLE mb_artist_credit (id INTEGER, name VARCHAR)")
     c.execute(
         "CREATE TABLE mb_artist_credit_name "
-        "(artist_credit INTEGER, position INTEGER, artist INTEGER, name VARCHAR, join_phrase VARCHAR)"
+        "(artist_credit INTEGER, position INTEGER, artist INTEGER, "
+        "name VARCHAR, join_phrase VARCHAR)"
     )
     c.execute(
         "CREATE TABLE mb_release_group "
@@ -74,3 +75,31 @@ def test_match_album_unknown_artist_no_candidates(con):
     result = match_album(con, AlbumQuery(title="Whatever", artist_name="Nonexistent Band"))
     assert result.mbid is None
     assert result.candidates == []
+
+
+def test_match_track_by_isrc(con):
+    from needledrop.matching.matcher import TrackQuery, match_track
+
+    result = match_track(
+        con, TrackQuery(title="Karma Police", artist_name="Radiohead", isrc="GBAYE9700116")
+    )
+    assert result.method == MatchMethod.ISRC
+    assert result.mbid == "gid-karma"
+    assert result.confidence == 1.0
+
+
+def test_match_track_fuzzy(con):
+    from needledrop.matching.matcher import TrackQuery, match_track
+
+    result = match_track(con, TrackQuery(title="Karma Police", artist_name="Radiohead"))
+    assert result.method == MatchMethod.FUZZY
+    assert result.mbid == "gid-karma"
+
+
+def test_match_track_no_match_returns_candidates(con):
+    from needledrop.matching.matcher import TrackQuery, match_track
+
+    result = match_track(con, TrackQuery(title="Paranoid Android", artist_name="Radiohead"))
+    assert result.mbid is None
+    assert result.method == MatchMethod.NONE
+    assert {c.candidate_mbid for c in result.candidates} == {"gid-karma"}
