@@ -302,7 +302,7 @@ from needledrop.normalize.text import normalize_name
 # (`feat.`/`featuring`, `&`, `/`, comma) — not `and`/`x`/`vs`, which over-split
 # legitimate single names. Note: "Earth, Wind & Fire" still over-splits — a known
 # heuristic limitation; matching primarily uses the first (primary) credit.
-_SPLIT = re.compile(r"\s*(?:,|&|/|\bfeat\.?\b|\bfeaturing\b)\s*", re.IGNORECASE)
+_SPLIT = re.compile(r"\s*(?:,|&|/|\bfeat\.?(?=\s)|\bfeaturing\b)\s*", re.IGNORECASE)
 
 _VARIOUS = {"various artists", "various", "va"}
 
