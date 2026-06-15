@@ -50,7 +50,13 @@ def apply_migrations(con: duckdb.DuckDBPyConnection, migrations_dir: str | Path)
 
 
 def _split_statements(sql: str) -> list[str]:
-    """Split a SQL script into statements, dropping comment-only lines."""
+    """Split a SQL script into statements, dropping comment-only lines.
+
+    Naive by design: it removes whole-line ``--`` comments then splits on ``;``.
+    It does NOT handle semicolons inside string literals or trailing inline
+    comments, so project-authored schema/migration SQL must keep one statement
+    per ``;`` and must not embed ``;`` in string defaults.
+    """
     lines = [line for line in sql.splitlines() if not line.strip().startswith("--")]
     cleaned = "\n".join(lines)
     return [stmt.strip() for stmt in cleaned.split(";") if stmt.strip()]
