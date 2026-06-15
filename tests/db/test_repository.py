@@ -76,13 +76,35 @@ def test_upsert_album_dedupes_by_apple_id_and_backfills_mbid():
     assert row == ("rg-okc", "standard")
 
 
-def test_upsert_album_dedupes_by_release_group_mbid():
+def test_upsert_album_dedupes_by_release_mbid():
     con = _con()
     artist_id = upsert_artist(con, canonical_name="Radiohead", mbid="mbid-r")
-    a = upsert_album(con, title="OK Computer", artist_id=artist_id, release_group_mbid="rg-okc")
-    b = upsert_album(con, title="OK Computer", artist_id=artist_id, release_group_mbid="rg-okc")
+    a = upsert_album(con, title="OK Computer", artist_id=artist_id, release_mbid="rel-okc")
+    b = upsert_album(con, title="OK Computer", artist_id=artist_id, release_mbid="rel-okc")
     assert a == b
     assert con.execute("SELECT count(*) FROM albums").fetchone()[0] == 1
+
+
+def test_upsert_album_keeps_distinct_editions_of_one_release_group():
+    # Standard + Deluxe share a release-group but are separate owned editions —
+    # they must stay distinct canonical rows so each keeps its version_class.
+    con = _con()
+    artist_id = upsert_artist(con, canonical_name="Green Day", mbid="mbid-gd")
+    standard = upsert_album(
+        con, title="Dookie", artist_id=artist_id, release_group_mbid="rg-dookie",
+        version_class="standard", external_ids={"apple": "alb-std"},
+    )
+    deluxe = upsert_album(
+        con, title="Dookie (Deluxe)", artist_id=artist_id, release_group_mbid="rg-dookie",
+        version_class="deluxe", external_ids={"apple": "alb-dlx"},
+    )
+    assert standard != deluxe
+    assert con.execute("SELECT count(*) FROM albums").fetchone()[0] == 2
+    # Both share the release-group (the grouping key the dedup analysis uses).
+    rgs = con.execute("SELECT DISTINCT release_group_mbid FROM albums").fetchall()
+    assert rgs == [("rg-dookie",)]
+    classes = {r[0] for r in con.execute("SELECT version_class FROM albums").fetchall()}
+    assert classes == {"standard", "deluxe"}
 
 
 def test_upsert_track_inserts_with_recording_mbid():

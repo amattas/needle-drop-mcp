@@ -133,6 +133,12 @@ are never written by sync/analysis — only replaced wholesale by `mb import`.
 normalization used only as a display/fuzzy aid — it is no longer the grouping
 authority. `version_group_key` from the original SPEC **is** `release_group_mbid`.
 
+There is **one `albums` row per owned edition** (deduped by `release_mbid` when
+known, else the Apple album id). `release_group_mbid` is a *grouping attribute*,
+**never a dedup key** — distinct editions (standard/deluxe/remaster) share a
+release-group but remain separate rows so each keeps its own `version_class`; the
+duplicate-album analysis (§4.5) groups these rows by `release_group_mbid`.
+
 ### 4.3 Library & operational tables
 
 - **`library_items`** — `id`, `service` (`'apple_music'`), `service_item_id`,

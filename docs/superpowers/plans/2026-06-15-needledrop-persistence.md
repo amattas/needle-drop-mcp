@@ -203,13 +203,29 @@ def test_upsert_album_dedupes_by_apple_id_and_backfills_mbid():
     assert row == ("rg-okc", "standard")
 
 
-def test_upsert_album_dedupes_by_release_group_mbid():
+def test_upsert_album_dedupes_by_release_mbid():
     con = _con()
     artist_id = upsert_artist(con, canonical_name="Radiohead", mbid="mbid-r")
-    a = upsert_album(con, title="OK Computer", artist_id=artist_id, release_group_mbid="rg-okc")
-    b = upsert_album(con, title="OK Computer", artist_id=artist_id, release_group_mbid="rg-okc")
+    a = upsert_album(con, title="OK Computer", artist_id=artist_id, release_mbid="rel-okc")
+    b = upsert_album(con, title="OK Computer", artist_id=artist_id, release_mbid="rel-okc")
     assert a == b
     assert con.execute("SELECT count(*) FROM albums").fetchone()[0] == 1
+
+
+def test_upsert_album_keeps_distinct_editions_of_one_release_group():
+    # Standard + Deluxe share a release-group but are separate owned editions.
+    con = _con()
+    artist_id = upsert_artist(con, canonical_name="Green Day", mbid="mbid-gd")
+    standard = upsert_album(
+        con, title="Dookie", artist_id=artist_id, release_group_mbid="rg-dookie",
+        version_class="standard", external_ids={"apple": "alb-std"},
+    )
+    deluxe = upsert_album(
+        con, title="Dookie (Deluxe)", artist_id=artist_id, release_group_mbid="rg-dookie",
+        version_class="deluxe", external_ids={"apple": "alb-dlx"},
+    )
+    assert standard != deluxe
+    assert con.execute("SELECT count(*) FROM albums").fetchone()[0] == 2
 
 
 def test_upsert_track_inserts_with_recording_mbid():
@@ -249,20 +265,25 @@ def upsert_album(
     version_class: str | None = None,
     external_ids: dict[str, str] | None = None,
 ) -> int:
-    """Insert or update an album, deduping by release-group MBID then Apple external id."""
+    """Insert or update an album, deduping by release (edition) MBID then Apple external id.
+
+    `release_group_mbid` is the version-cluster grouping attribute, NOT a dedup key:
+    distinct editions share a release-group but stay separate canonical rows so each
+    keeps its own version_class (the duplicate-album analysis groups by release_group_mbid).
+    """
     external_ids = external_ids or {}
     ext_json = _dump_external_ids(external_ids)
 
-    if release_group_mbid:
+    if release_mbid:
         row = con.execute(
-            "SELECT id FROM albums WHERE release_group_mbid = ?", [release_group_mbid]
+            "SELECT id FROM albums WHERE release_mbid = ?", [release_mbid]
         ).fetchone()
         if row:
             con.execute(
                 "UPDATE albums SET title = ?, artist_id = COALESCE(?, artist_id), "
-                "release_mbid = COALESCE(?, release_mbid), "
+                "release_group_mbid = COALESCE(?, release_group_mbid), "
                 "version_class = COALESCE(?, version_class), external_ids_json = ? WHERE id = ?",
-                [title, artist_id, release_mbid, version_class, ext_json, row[0]],
+                [title, artist_id, release_group_mbid, version_class, ext_json, row[0]],
             )
             return row[0]
 

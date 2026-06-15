@@ -69,20 +69,26 @@ def upsert_album(
     version_class: str | None = None,
     external_ids: dict[str, str] | None = None,
 ) -> int:
-    """Insert or update an album, deduping by release-group MBID then Apple external id."""
+    """Insert or update an album, deduping by release (edition) MBID then Apple external id.
+
+    `release_group_mbid` is the version-cluster grouping attribute, NOT a dedup key:
+    distinct editions (standard/deluxe/remaster) share a release-group but must stay
+    separate canonical rows so each keeps its own version_class — the duplicate-album
+    analysis groups these rows by release_group_mbid.
+    """
     external_ids = external_ids or {}
     ext_json = _dump_external_ids(external_ids)
 
-    if release_group_mbid:
+    if release_mbid:
         row = con.execute(
-            "SELECT id FROM albums WHERE release_group_mbid = ?", [release_group_mbid]
+            "SELECT id FROM albums WHERE release_mbid = ?", [release_mbid]
         ).fetchone()
         if row:
             con.execute(
                 "UPDATE albums SET title = ?, artist_id = COALESCE(?, artist_id), "
-                "release_mbid = COALESCE(?, release_mbid), "
+                "release_group_mbid = COALESCE(?, release_group_mbid), "
                 "version_class = COALESCE(?, version_class), external_ids_json = ? WHERE id = ?",
-                [title, artist_id, release_mbid, version_class, ext_json, row[0]],
+                [title, artist_id, release_group_mbid, version_class, ext_json, row[0]],
             )
             return row[0]
 
