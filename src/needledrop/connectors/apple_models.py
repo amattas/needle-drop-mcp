@@ -12,6 +12,14 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
+def _embedded_catalog_attr(resource: dict[str, Any], attr: str) -> str | None:
+    """Read an attribute from an embedded `include=catalog` relationship, if present."""
+    data = resource.get("relationships", {}).get("catalog", {}).get("data") or []
+    if data:
+        return data[0].get("attributes", {}).get(attr)
+    return None
+
+
 class LibraryAlbum(BaseModel):
     id: str
     name: str
@@ -19,6 +27,7 @@ class LibraryAlbum(BaseModel):
     track_count: int | None = None
     release_date: str | None = None
     date_added: str | None = None
+    upc: str | None = None
 
     @classmethod
     def from_api(cls, resource: dict[str, Any]) -> LibraryAlbum:
@@ -30,6 +39,7 @@ class LibraryAlbum(BaseModel):
             track_count=a.get("trackCount"),
             release_date=a.get("releaseDate"),
             date_added=a.get("dateAdded"),
+            upc=_embedded_catalog_attr(resource, "upc"),
         )
 
 
@@ -42,6 +52,7 @@ class LibrarySong(BaseModel):
     track_number: int | None = None
     disc_number: int | None = None
     release_date: str | None = None
+    isrc: str | None = None
 
     @classmethod
     def from_api(cls, resource: dict[str, Any]) -> LibrarySong:
@@ -55,6 +66,7 @@ class LibrarySong(BaseModel):
             track_number=a.get("trackNumber"),
             disc_number=a.get("discNumber"),
             release_date=a.get("releaseDate"),
+            isrc=_embedded_catalog_attr(resource, "isrc"),
         )
 
 

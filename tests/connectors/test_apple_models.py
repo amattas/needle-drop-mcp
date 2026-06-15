@@ -96,3 +96,37 @@ def test_catalog_song_carries_isrc():
     song = CatalogSong.from_api(resource)
     assert song.isrc == "GBAYE9700116"
     assert song.album_name == "OK Computer"
+
+
+def test_library_album_extracts_embedded_catalog_upc():
+    resource = {
+        "id": "l.abc",
+        "type": "library-albums",
+        "attributes": {"name": "OK Computer", "artistName": "Radiohead"},
+        "relationships": {
+            "catalog": {"data": [{"id": "123", "type": "albums",
+                                  "attributes": {"upc": "634904032463"}}]}
+        },
+    }
+    album = LibraryAlbum.from_api(resource)
+    assert album.upc == "634904032463"
+
+
+def test_library_album_empty_catalog_relationship_is_none():
+    resource = {"id": "l.x", "attributes": {"name": "X"},
+                "relationships": {"catalog": {"data": []}}}
+    assert LibraryAlbum.from_api(resource).upc is None
+
+
+def test_library_song_extracts_embedded_catalog_isrc():
+    resource = {
+        "id": "l.s1",
+        "type": "library-songs",
+        "attributes": {"name": "Karma Police", "artistName": "Radiohead"},
+        "relationships": {
+            "catalog": {"data": [{"id": "456", "type": "songs",
+                                  "attributes": {"isrc": "GBAYE9700116"}}]}
+        },
+    }
+    song = LibrarySong.from_api(resource)
+    assert song.isrc == "GBAYE9700116"
