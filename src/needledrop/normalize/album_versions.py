@@ -22,7 +22,7 @@ _VERSION_CHECKS: tuple[tuple[str, VersionClass], ...] = (
     ("anniversary", VersionClass.ANNIVERSARY),
     ("deluxe", VersionClass.DELUXE),
     ("expanded", VersionClass.EXPANDED),
-    ("remaster", VersionClass.REMASTER),
+    ("remaster(?:ed)?", VersionClass.REMASTER),
     ("live", VersionClass.LIVE),
     ("explicit", VersionClass.EXPLICIT),
     ("clean", VersionClass.CLEAN),
@@ -40,6 +40,6 @@ def classify_album_version(title: str) -> VersionClass:
     """Classify an album title's version from keyword cues (word-boundary matched)."""
     lowered = title.lower()
     for keyword, version in _VERSION_CHECKS:
-        if re.search(rf"\b{keyword}", lowered):
+        if re.search(rf"\b{keyword}\b", lowered):
             return version
     return VersionClass.STANDARD

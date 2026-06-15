@@ -178,6 +178,16 @@ def test_classify_album_version():
 def test_classify_live_uses_word_boundary():
     # "Deliverance" contains the letters l-i-v-e but is not Live.
     assert classify_album_version("Deliverance") == VersionClass.STANDARD
+
+
+def test_classify_clean_uses_trailing_word_boundary():
+    # "Cleaning" must not classify as CLEAN (prefix-only match would be a bug).
+    assert classify_album_version("Spring Cleaning") == VersionClass.STANDARD
+
+
+def test_classify_remastered_still_matches_with_boundaries():
+    assert classify_album_version("The Wall (Remaster)") == VersionClass.REMASTER
+    assert classify_album_version("The Wall (Remastered)") == VersionClass.REMASTER
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -212,7 +222,7 @@ _VERSION_CHECKS: tuple[tuple[str, VersionClass], ...] = (
     ("anniversary", VersionClass.ANNIVERSARY),
     ("deluxe", VersionClass.DELUXE),
     ("expanded", VersionClass.EXPANDED),
-    ("remaster", VersionClass.REMASTER),
+    ("remaster(?:ed)?", VersionClass.REMASTER),
     ("live", VersionClass.LIVE),
     ("explicit", VersionClass.EXPLICIT),
     ("clean", VersionClass.CLEAN),
@@ -230,7 +240,7 @@ def classify_album_version(title: str) -> VersionClass:
     """Classify an album title's version from keyword cues (word-boundary matched)."""
     lowered = title.lower()
     for keyword, version in _VERSION_CHECKS:
-        if re.search(rf"\b{keyword}", lowered):
+        if re.search(rf"\b{keyword}\b", lowered):
             return version
     return VersionClass.STANDARD
 ```
