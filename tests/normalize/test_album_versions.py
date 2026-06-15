@@ -3,7 +3,9 @@ from needledrop.normalize.album_versions import classify_album_version, get_albu
 
 
 def test_get_album_base_title_strips_parenthetical_editions():
-    assert get_album_base_title("American Idiot (20th Anniversary Deluxe Edition)") == "American Idiot"
+    assert get_album_base_title("American Idiot (20th Anniversary Deluxe Edition)") == (
+        "American Idiot"
+    )
     assert get_album_base_title("Meteora (Bonus Track Version)") == "Meteora"
     assert get_album_base_title("Abbey Road [Remastered]") == "Abbey Road"
 
