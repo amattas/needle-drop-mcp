@@ -15,6 +15,9 @@ def test_build_auth_page_embeds_token_and_musickit():
     assert "authorize" in html
     assert "NeedleDrop" in html
     assert CALLBACK_PATH in html
+    # Regression guard for a deliberate security decision: Apple's MusicKit CDN
+    # script is mutable/unversioned, so no Subresource Integrity hash is pinned.
+    assert "integrity" not in html
 
 
 def test_extract_user_token_from_form_body():

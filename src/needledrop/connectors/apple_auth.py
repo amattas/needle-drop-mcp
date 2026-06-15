@@ -17,6 +17,13 @@ from needledrop.connectors.apple_token import store_user_token
 
 CALLBACK_PATH = "/callback"
 
+# `developer_token` and `app_name` are interpolated into JS string literals below.
+# This is safe: the developer token is an ES256 JWT (base64url + '.', no quotes or
+# backslashes) signed from the operator's own .p8, and `app_name` is an operator-
+# supplied constant — neither is attacker-controlled, so neither can break out of
+# the surrounding '...' literal. The MusicKit <script> deliberately omits a
+# Subresource Integrity hash: Apple serves that file mutably/unversioned, so a
+# pinned hash would break the auth flow on every Apple update.
 _PAGE_TEMPLATE = """<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><title>NeedleDrop — Apple Music authorization</title></head>
