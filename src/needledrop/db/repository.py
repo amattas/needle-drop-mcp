@@ -24,7 +24,8 @@ def upsert_artist(
     sort_name: str | None = None,
     external_ids: dict[str, str] | None = None,
 ) -> int:
-    """Insert or update an artist, deduping by MBID then Apple external id. Returns its id."""
+    """Insert or update an artist, deduping by MBID, then Apple external id, then exact canonical
+    name. Returns its id."""
     external_ids = external_ids or {}
     ext_json = _dump_external_ids(external_ids)
 
@@ -51,6 +52,19 @@ def upsert_artist(
                 [canonical_name, sort_name, mbid, ext_json, row[0]],
             )
             return row[0]
+
+    # Last-resort dedup: same display name (name collisions are accepted for an
+    # Apple-only library; MBID disambiguates when present).
+    row = con.execute(
+        "SELECT id FROM artists WHERE canonical_name = ?", [canonical_name]
+    ).fetchone()
+    if row:
+        con.execute(
+            "UPDATE artists SET sort_name = COALESCE(?, sort_name), mbid = COALESCE(?, mbid), "
+            "external_ids_json = ? WHERE id = ?",
+            [sort_name, mbid, ext_json, row[0]],
+        )
+        return row[0]
 
     return con.execute(
         "INSERT INTO artists (mbid, canonical_name, sort_name, external_ids_json) "

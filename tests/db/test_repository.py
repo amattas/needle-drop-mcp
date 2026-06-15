@@ -272,3 +272,19 @@ def test_get_library_albums_returns_present_albums():
     assert len(albums) == 1
     assert albums[0]["title"] == "OK Computer"
     assert albums[0]["release_group_mbid"] == "rg1"
+
+
+def test_upsert_artist_dedupes_by_name_when_no_ids():
+    con = _con()
+    first = upsert_artist(con, canonical_name="Radiohead")
+    again = upsert_artist(con, canonical_name="Radiohead")
+    assert again == first
+    assert con.execute("SELECT count(*) FROM artists").fetchone()[0] == 1
+
+
+def test_upsert_artist_name_dedup_does_not_collide_with_id_matched():
+    con = _con()
+    with_mbid = upsert_artist(con, canonical_name="Radiohead", mbid="mbid-r")
+    name_only = upsert_artist(con, canonical_name="Radiohead")
+    assert name_only == with_mbid
+    assert con.execute("SELECT count(*) FROM artists").fetchone()[0] == 1
