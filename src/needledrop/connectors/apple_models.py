@@ -21,7 +21,7 @@ class LibraryAlbum(BaseModel):
     date_added: str | None = None
 
     @classmethod
-    def from_api(cls, resource: dict[str, Any]) -> "LibraryAlbum":
+    def from_api(cls, resource: dict[str, Any]) -> LibraryAlbum:
         a = resource.get("attributes", {})
         return cls(
             id=resource["id"],
@@ -44,7 +44,7 @@ class LibrarySong(BaseModel):
     release_date: str | None = None
 
     @classmethod
-    def from_api(cls, resource: dict[str, Any]) -> "LibrarySong":
+    def from_api(cls, resource: dict[str, Any]) -> LibrarySong:
         a = resource.get("attributes", {})
         return cls(
             id=resource["id"],
@@ -64,7 +64,7 @@ class LibraryPlaylist(BaseModel):
     description: str | None = None
 
     @classmethod
-    def from_api(cls, resource: dict[str, Any]) -> "LibraryPlaylist":
+    def from_api(cls, resource: dict[str, Any]) -> LibraryPlaylist:
         a = resource.get("attributes", {})
         description = a.get("description", {})
         return cls(
@@ -83,7 +83,7 @@ class CatalogAlbum(BaseModel):
     release_date: str | None = None
 
     @classmethod
-    def from_api(cls, resource: dict[str, Any]) -> "CatalogAlbum":
+    def from_api(cls, resource: dict[str, Any]) -> CatalogAlbum:
         a = resource.get("attributes", {})
         return cls(
             id=resource["id"],
@@ -104,7 +104,7 @@ class CatalogSong(BaseModel):
     duration_ms: int | None = None
 
     @classmethod
-    def from_api(cls, resource: dict[str, Any]) -> "CatalogSong":
+    def from_api(cls, resource: dict[str, Any]) -> CatalogSong:
         a = resource.get("attributes", {})
         return cls(
             id=resource["id"],
