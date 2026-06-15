@@ -50,7 +50,7 @@ not separate specs:
 |---|----------|-----------|
 | 1 | **MusicBrainz is the canonical identity authority.** Canonical album identity = MB **release-group MBID**; track identity = MB **recording MBID**; artist identity = MB **artist MBID**. | Release-groups already cluster every edition of an album, and an artist's release-groups *are* their discography. Version-grouping, dedup, and "what am I missing" become lookups against an authority instead of heuristics. |
 | 2 | **The MB data is hosted locally**, not queried live. | Eliminates the ~1 req/s API rate limit; enables batch matching and full-discography sweeps. |
-| 3 | **MB ingestion:** download the full Postgres dump → restore into an ephemeral local Postgres (Docker) → materialize the music-core tables into DuckDB via the DuckDB `postgres` extension → drop Postgres. | The DuckDB `postgres` extension attaches to a *running* server; it cannot parse `pg_dump`/`mbdump` archives directly. Postgres is therefore a transient loader. End state is a single portable DuckDB file; no server at query time. |
+| 3 | **MB ingestion (direct, no third-party importer):** download the full export → ephemeral `postgres:18` (Docker) ← apply MB's *own* schema DDL (`Extensions` → `CreateCollations` → `CreateTypes` → `CreateTables`, no PKs/FKs/indexes) at the `musicbrainz-server` git tag matching the dump's `SCHEMA_SEQUENCE` ← `COPY` every core TSV from `mbdump.tar.bz2` → DuckDB `ATTACH (TYPE postgres, READ_ONLY)` materializes the **entire** core schema as `mb_*` → drop Postgres. | Dump TSVs are headerless `COPY` text; MB's versioned DDL supplies exact column order. No mbslave/musicbrainz-docker dependency — avoids importer staleness against the current schema (the chosen tool's last release predated it). `SCHEMA_SEQUENCE` → tag is an explicit, fail-loud version guard. JSON dumps were rejected: they carry ISRCs only for *standalone* recordings, which would break ISRC matching. End state: a single portable DuckDB file; no server at query time. |
 | 4 | **Apple Music user token via a bundled auth helper.** `needledrop auth apple` serves a local MusicKit JS page; the user authorizes once in a browser; the token is captured and persisted. | Apple mints Music User Tokens only through interactive MusicKit authorization — there is no headless server-side flow. Cross-platform (any browser). Re-run on expiry/revocation. |
 | 5 | **Tiered matching with a review queue.** Exact identifiers (ISRC, UPC/barcode) auto-link; high-confidence fuzzy (artist + title + year over threshold) auto-links with the score stored; low-confidence and no-match become `unmatched_item` findings resolved via an MCP tool. | Keeps canonical data trustworthy. Ambiguity becomes actionable work instead of silent corruption of every downstream analysis. |
 | 6 | **Secrets in the OS keyring behind a pluggable backend.** `keyring` by default (macOS Keychain / freedesktop Secret Service / Windows Credential Manager); a 1Password backend can be dropped in. Non-secret config in a plain file. | No plaintext credentials on disk; portable for any user; accommodates a zero-knowledge workflow without forcing 1Password on others. |
@@ -61,11 +61,12 @@ not separate specs:
 ## 3. Architecture & data flow
 
 ```text
-needledrop mb import   →  download full MB dump
-                          →  restore into ephemeral Postgres (Docker)
-                          →  DuckDB ATTACH (postgres ext) + CREATE TABLE mb_* AS SELECT …
+needledrop mb import   →  download full export (LATEST → mbdump.tar.bz2 + SCHEMA_SEQUENCE)
+                          →  ephemeral postgres:18 (Docker); apply MB DDL at the matching tag
+                          →  COPY every core TSV from the dump into Postgres
+                          →  DuckDB ATTACH (TYPE postgres, READ_ONLY) + CREATE TABLE mb_<t> AS SELECT (all core tables)
                           →  drop Postgres container
-                          →  DuckDB now holds the mb_* authority tables
+                          →  DuckDB now holds the full MB core schema as mb_* authority tables
 
 needledrop auth apple  →  local MusicKit JS page (http://localhost:<port>)
                           →  user clicks Authorize once
@@ -100,8 +101,9 @@ The schema lives in `db/schema.sql`, evolved through `db/migrations/`.
 
 ### 4.1 MusicBrainz authority tables (`mb_*`, read-only, materialized)
 
-A curated music-core subset of MB, sourced from the full dump so the SELECT list
-can be extended later without re-architecting:
+The **entire** MB core schema (~215 tables from `mbdump.tar.bz2`) is materialized
+as `mb_<table>`, so any table is available later without re-importing. The
+matching/analysis layer uses this music-core subset:
 
 - `mb_artist`
 - `mb_artist_credit`, `mb_artist_credit_name`
@@ -113,7 +115,8 @@ can be extended later without re-architecting:
 - `mb_recording`
 - `mb_isrc`
 
-These are never written by sync/analysis — only replaced by `mb import`.
+Tables with no public dump file (private/editor data) materialize empty. `mb_*`
+are never written by sync/analysis — only replaced wholesale by `mb import`.
 
 ### 4.2 Canonical entities (keyed to MBIDs where matched)
 
@@ -227,10 +230,20 @@ the Music User Token back to localhost; the token is written to the keyring; the
 server shuts down. Re-run on expiry/revocation.
 
 ### 6.3 `musicbrainz/`
-Orchestrates `needledrop mb import`: download the current full dump, stand up an
-ephemeral Postgres (Docker) and restore into it, `ATTACH` from DuckDB via the
-`postgres` extension, `CREATE TABLE mb_* AS SELECT …` for the music-core subset,
-tear down Postgres. Idempotent and re-runnable to refresh.
+Orchestrates `needledrop mb import` (decision #3), decomposed into focused modules:
+- `dumps.py` — resolve `LATEST`, build URLs, download `mbdump.tar.bz2` + `SCHEMA_SEQUENCE`
+  (+ checksums), verify, extract.
+- `schema_sql.py` — map the dump's `SCHEMA_SEQUENCE` to the matching `musicbrainz-server`
+  git tag (fail-loud on an unknown sequence), fetch the ordered DDL files
+  (`Extensions`, `CreateCollations`, `CreateTypes`, `CreateTables`).
+- `postgres.py` — ephemeral `postgres:18` lifecycle via the `docker` CLI (start,
+  `pg_isready` wait, run SQL, `COPY` a table, teardown).
+- `materialize.py` — DuckDB `ATTACH (TYPE postgres, READ_ONLY)`; `CREATE TABLE mb_<t>
+  AS SELECT *` for every `musicbrainz`-schema table.
+- `importer.py` — orchestrator `run_import()` sequencing the above with guaranteed
+  Postgres teardown on success or failure.
+
+Re-runnable to refresh; replaces the `mb_*` tables wholesale.
 
 ### 6.4 `matching/`
 The tiered matcher (decision #5). Inputs: a normalized library item. Tier 1
@@ -314,8 +327,11 @@ keyring-setup guidance, not a place for live credentials.
   network.
 - **Apple connector** — recorded `httpx` cassettes; never hits live Apple Music
   in CI.
-- **MB import** — the orchestration is integration-tested with a tiny dump
-  fixture; the heavy full import is a manual/operational path, not a CI gate.
+- **MB import** — pure logic (version→tag map, URL building, COPY/materialize SQL
+  generation, orchestration sequencing) is unit-tested with mocks; the PG↔DuckDB
+  bridge is integration-tested against an ephemeral `postgres:18` seeded with a
+  tiny synthetic schema (Docker-gated, skipped when Docker is absent); the full
+  ~7 GB import is a documented manual path, not a CI gate.
 - Gate: full suite green + `ruff` clean (CI-parity) before any work is called
   done.
 
@@ -325,16 +341,24 @@ keyring-setup guidance, not a place for live credentials.
 - Dependencies: `fastmcp`, `duckdb` (+ `postgres` extension), `pydantic`,
   `httpx`, `orjson`, `rapidfuzz`, `rich`, `typer`, `keyring`. `mutagen` is
   deferred with the local-files connector.
+- **Docker** is required for `mb import` only (ephemeral `postgres:18`); the MCP
+  server and all other runtime paths need only DuckDB.
 - Lint/format with `ruff`; tests with `pytest`.
 
 ---
 
 ## 10. Risks & operational notes
 
-- **MB import is the one heavyweight operation.** The full dump is multi-GB
-  compressed; restoring into Postgres and materializing into DuckDB takes real
-  time and disk. It is a periodic, Docker-based op — acceptable for a local /
-  home-lab setup, but the single most demanding step.
+- **MB import is the one heavyweight operation.** ~7 GB compressed download + a
+  full load into `postgres:18` (tens of GB transient) then materialize into
+  DuckDB — minutes-to-hours, Docker-based. Periodic; acceptable for a local /
+  home-lab setup, but the single most demanding step. Requires Docker; ICU and
+  the `cube`/`earthdistance`/`unaccent` contrib modules MB needs are present in
+  the official `postgres:18` image.
+- **MB schema-version coupling.** The `SCHEMA_SEQUENCE` → git-tag map must gain an
+  entry when MB ships a schema change (≈yearly). A mismatch fails loudly (the
+  import refuses) rather than corrupting data; updating is a one-line map entry
+  plus bumping the pinned tag.
 - **Apple write API is asymmetric.** Adding by catalog ID is well-supported;
   library *removal* is best-effort and historically limited. `remove_album`
   ships as best-effort with clear reporting, not a guarantee.
