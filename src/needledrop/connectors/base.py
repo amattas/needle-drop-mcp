@@ -30,6 +30,10 @@ class MusicConnector(ABC):
 
     @abstractmethod
     def search_catalog(
-        self, storefront: str, term: str, types: tuple[str, ...] = ("albums", "songs"), limit: int = 25
+        self,
+        storefront: str,
+        term: str,
+        types: tuple[str, ...] = ("albums", "songs"),
+        limit: int = 25,
     ) -> Any:
         """Search the provider catalog."""

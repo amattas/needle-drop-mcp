@@ -16,7 +16,9 @@ def _p8_pem() -> str:
 
 def test_make_developer_token_has_expected_header_and_claims():
     pem = _p8_pem()
-    token = make_developer_token(pem, team_id="TEAM000000", key_id="KEY0000000", now=1_700_000_000, ttl=3600)
+    token = make_developer_token(
+        pem, team_id="TEAM000000", key_id="KEY0000000", now=1_700_000_000, ttl=3600
+    )
 
     header = jwt.get_unverified_header(token)
     assert header["alg"] == "ES256"
