@@ -62,3 +62,35 @@ def test_list_table_files_skips_metadata(tmp_path):
     (mbdump / "TIMESTAMP").write_text("x")
     names = [name for name, _ in list_table_files(mbdump)]
     assert names == ["artist", "release_group"]
+
+
+def test_verify_sha256_ok(tmp_path):
+    import hashlib
+
+    from needledrop.musicbrainz.dumps import verify_sha256
+
+    p = tmp_path / "f"
+    p.write_bytes(b"data")
+    verify_sha256(p, {"f": hashlib.sha256(b"data").hexdigest()}, "f")  # must not raise
+
+
+def test_verify_sha256_mismatch_raises(tmp_path):
+    import pytest
+
+    from needledrop.musicbrainz.dumps import verify_sha256
+
+    p = tmp_path / "f"
+    p.write_bytes(b"data")
+    with pytest.raises(ValueError):
+        verify_sha256(p, {"f": "deadbeef"}, "f")
+
+
+def test_verify_sha256_missing_raises(tmp_path):
+    import pytest
+
+    from needledrop.musicbrainz.dumps import verify_sha256
+
+    p = tmp_path / "f"
+    p.write_bytes(b"data")
+    with pytest.raises(ValueError):
+        verify_sha256(p, {}, "f")

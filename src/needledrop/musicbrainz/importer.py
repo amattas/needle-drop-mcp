@@ -74,11 +74,17 @@ def import_musicbrainz(settings: Settings, *, http=None) -> dict:
             http.get(url).raise_for_status().text
             for url in schema_sql.ddl_file_urls(settings.mb_server_raw_base, tag)
         ]
+        sums = dumps.parse_sha256sums(
+            http.get(dumps.fullexport_url(settings.mb_dump_base_url, latest, "SHA256SUMS"))
+            .raise_for_status()
+            .text
+        )
         tarball = dumps.download_file(
             dumps.fullexport_url(settings.mb_dump_base_url, latest, "mbdump.tar.bz2"),
             data_dir / latest / "mbdump.tar.bz2",
             client=http,
         )
+        dumps.verify_sha256(tarball, sums, "mbdump.tar.bz2")
         mbdump_dir = dumps.extract_tarball(tarball, data_dir / latest / "extracted")
         table_files = [
             (name, f"/dump/mbdump/{path.name}")

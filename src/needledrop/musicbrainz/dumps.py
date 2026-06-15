@@ -59,6 +59,18 @@ def list_table_files(mbdump_dir: str | Path) -> list[tuple[str, Path]]:
     return out
 
 
+def verify_sha256(path: str | Path, sums: dict[str, str], filename: str) -> None:
+    """Raise ValueError if `path`'s SHA-256 doesn't match `sums[filename]`."""
+    expected = sums.get(filename)
+    if expected is None:
+        raise ValueError(f"{filename} not listed in SHA256SUMS")
+    actual = sha256_file(path)
+    if actual != expected:
+        raise ValueError(
+            f"SHA256 mismatch for {filename}: expected {expected}, got {actual}"
+        )
+
+
 def download_file(url: str, dest: str | Path, *, client: httpx.Client | None = None) -> Path:
     """Stream-download `url` to `dest` (creating parent dirs). Raises on HTTP error.
 
