@@ -301,7 +301,9 @@ FastMCP app exposing the tool set (§7) over stdio.
 
 `typer` + `rich`:
 
-- `needledrop auth apple` — capture the Music User Token (§6.2).
+- `needledrop auth apple set-credentials` — store the developer credentials
+  (Team ID, Key ID, `.p8`) in the keystore; `needledrop auth apple login` —
+  run the MusicKit JS flow to capture the Music User Token (§6.2).
 - `needledrop mb import` — build/refresh the MB authority tables (§6.3).
 - `needledrop sync` — pull and match the Apple library.
 - `needledrop scan` — run analysis, write findings.
@@ -339,8 +341,9 @@ keyring-setup guidance, not a place for live credentials.
 - `mamba` env named `needledrop`; newest Python the dependency set allows
   (target 3.13, fall back if a pin blocks it).
 - Dependencies: `fastmcp`, `duckdb` (+ `postgres` extension), `pydantic`,
-  `httpx`, `orjson`, `rapidfuzz`, `rich`, `typer`, `keyring`. `mutagen` is
-  deferred with the local-files connector.
+  `httpx`, `orjson`, `rapidfuzz`, `rich`, `typer`, `keyring`, `pyjwt[crypto]`
+  (Apple developer-token ES256 signing). `mutagen` is deferred with the
+  local-files connector.
 - **Docker** is required for `mb import` only (ephemeral `postgres:18`); the MCP
   server and all other runtime paths need only DuckDB.
 - Lint/format with `ruff`; tests with `pytest`.
