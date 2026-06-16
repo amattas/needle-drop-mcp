@@ -355,6 +355,25 @@ def test_get_artist_collection_tool_returns_discography():
     assert result[0]["owned"] is False
 
 
+def test_get_album_versions_tool_returns_editions():
+    con = _fresh_con()
+    con.execute("CREATE TABLE mb_release_group (id INTEGER, gid VARCHAR, name VARCHAR)")
+    con.execute(
+        "CREATE TABLE mb_release "
+        "(id INTEGER, gid VARCHAR, name VARCHAR, barcode VARCHAR, release_group INTEGER)"
+    )
+    con.execute("CREATE TABLE mb_medium (release INTEGER, track_count INTEGER)")
+    con.execute("INSERT INTO mb_release_group VALUES (100, 'rg-kida', 'Kid A')")
+    con.execute("INSERT INTO mb_release VALUES (200, 'rel-kida-std', 'Kid A', '0123', 100)")
+    con.execute("INSERT INTO mb_medium VALUES (200, 10)")
+    result = _call(
+        create_server(con), "get_album_versions", {"release_group_mbid": "rg-kida"}
+    )
+    assert [r["title"] for r in result] == ["Kid A"]
+    assert result[0]["track_count"] == 10
+    assert result[0]["owned"] is False
+
+
 def test_search_catalog_tool_uses_injected_callable():
     con = _fresh_con()
     calls = []
