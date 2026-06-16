@@ -115,3 +115,70 @@ def test_iter_library_playlists_does_not_request_include():
 
     list(_connector(handler).iter_library_playlists())
     assert seen["include"] is None
+
+
+def test_add_albums_to_library_posts_catalog_ids():
+    from urllib.parse import unquote
+
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["method"] = request.method
+        seen["url"] = unquote(str(request.url))
+        seen["muth"] = request.headers.get("Music-User-Token")
+        return httpx.Response(202)
+
+    _connector(handler).add_albums_to_library(["1440857781", "1440857782"])
+    assert seen["method"] == "POST"
+    assert "/v1/me/library" in seen["url"]
+    assert "1440857781,1440857782" in seen["url"]
+    assert seen["muth"] == "UTOK"
+
+
+def test_remove_album_from_library_deletes_by_library_id():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["method"] = request.method
+        seen["url"] = str(request.url)
+        return httpx.Response(204)
+
+    _connector(handler).remove_album_from_library("l.123")
+    assert seen["method"] == "DELETE"
+    assert seen["url"].endswith("/v1/me/library/albums/l.123")
+
+
+def test_create_playlist_posts_attributes_and_tracks():
+    import json
+
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["method"] = request.method
+        seen["url"] = str(request.url)
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(
+            201,
+            json={
+                "data": [
+                    {
+                        "id": "p.1",
+                        "attributes": {
+                            "name": "Cleanup",
+                            "description": {"standard": "auto"},
+                        },
+                    }
+                ]
+            },
+        )
+
+    playlist = _connector(handler).create_playlist(
+        "Cleanup", description="auto", track_ids=["s.1", "s.2"]
+    )
+    assert seen["method"] == "POST"
+    assert seen["url"].endswith("/v1/me/library/playlists")
+    assert seen["body"]["attributes"]["name"] == "Cleanup"
+    assert seen["body"]["attributes"]["description"] == "auto"
+    assert [t["id"] for t in seen["body"]["relationships"]["tracks"]["data"]] == ["s.1", "s.2"]
+    assert playlist.id == "p.1"
+    assert playlist.name == "Cleanup"

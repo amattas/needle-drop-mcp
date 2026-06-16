@@ -104,3 +104,42 @@ class AppleMusicConnector(MusicConnector):
         albums = [CatalogAlbum.from_api(x) for x in results.get("albums", {}).get("data", [])]
         songs = [CatalogSong.from_api(x) for x in results.get("songs", {}).get("data", [])]
         return CatalogSearchResult(albums=albums, songs=songs)
+
+    def add_albums_to_library(self, catalog_album_ids: list[str]) -> None:
+        """Add catalog albums (by catalog id) to the user's library."""
+        response = self._client.post(
+            "/v1/me/library",
+            params={"ids[albums]": ",".join(catalog_album_ids)},
+            headers=self._headers(user=True),
+        )
+        response.raise_for_status()
+
+    def remove_album_from_library(self, library_album_id: str) -> None:
+        """Remove a library album (by library id) from the user's library."""
+        response = self._client.delete(
+            f"/v1/me/library/albums/{library_album_id}",
+            headers=self._headers(user=True),
+        )
+        response.raise_for_status()
+
+    def create_playlist(
+        self,
+        name: str,
+        *,
+        description: str | None = None,
+        track_ids: list[str] | None = None,
+    ) -> LibraryPlaylist:
+        """Create a library playlist, optionally seeded with song ids."""
+        attributes: dict[str, str] = {"name": name}
+        if description is not None:
+            attributes["description"] = description
+        body: dict = {"attributes": attributes}
+        if track_ids:
+            body["relationships"] = {
+                "tracks": {"data": [{"id": tid, "type": "songs"} for tid in track_ids]}
+            }
+        response = self._client.post(
+            "/v1/me/library/playlists", json=body, headers=self._headers(user=True)
+        )
+        response.raise_for_status()
+        return LibraryPlaylist.from_api(response.json()["data"][0])
