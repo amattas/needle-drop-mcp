@@ -80,3 +80,24 @@ def test_open_db_bootstraps_schema_on_fresh_db(tmp_path):
     assert EXPECTED_TABLES.issubset(names)
     # Idempotent: opening again must not raise.
     open_db(tmp_path / "fresh.duckdb")
+
+
+def test_open_db_albums_has_total_tracks(tmp_path):
+    con = open_db(tmp_path / "fresh.duckdb")
+    cols = [r[1] for r in con.execute("PRAGMA table_info('albums')").fetchall()]
+    assert "total_tracks" in cols
+    open_db(tmp_path / "fresh.duckdb")  # opening again must not raise (idempotent)
+
+
+def test_total_tracks_migration_upgrades_legacy_albums(tmp_path):
+    from importlib import resources
+
+    from needledrop.db.duckdb_store import apply_migrations
+
+    con = connect(tmp_path / "legacy.duckdb")
+    con.execute("CREATE TABLE albums (id INTEGER, title VARCHAR)")  # pre-migration shape
+    migrations = resources.files("needledrop.db").joinpath("migrations")
+    applied = apply_migrations(con, migrations)
+    assert "0001_add_albums_total_tracks" in applied
+    cols = [r[1] for r in con.execute("PRAGMA table_info('albums')").fetchall()]
+    assert "total_tracks" in cols

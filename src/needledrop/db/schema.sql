@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS albums (
     artist_id INTEGER REFERENCES artists(id),
     title VARCHAR NOT NULL,
     version_class VARCHAR,
+    total_tracks INTEGER,
     external_ids_json VARCHAR NOT NULL DEFAULT '{}'
 );
 
