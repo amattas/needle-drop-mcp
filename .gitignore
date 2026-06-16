@@ -16,3 +16,8 @@ dist/
 *.duckdb.wal
 .env
 mb-dumps/
+
+# Docs (Docusaurus) — node_modules and generated output; package-lock.json is tracked
+website/node_modules/
+website/build/
+website/.docusaurus/
