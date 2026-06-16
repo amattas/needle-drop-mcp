@@ -47,6 +47,57 @@ def test_iter_library_albums_follows_next():
     assert [a.name for a in albums] == ["A", "B"]
 
 
+def test_paginate_retries_transient_5xx(monkeypatch):
+    import needledrop.connectors.apple_music as mod
+
+    monkeypatch.setattr(mod.time, "sleep", lambda *_: None)
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(500, json={"errors": [{"status": "500"}]})
+        return httpx.Response(200, json={"data": [{"id": "l.a", "attributes": {"name": "A"}}]})
+
+    albums = list(_connector(handler).iter_library_albums())
+    assert [a.id for a in albums] == ["l.a"]
+    assert calls["n"] == 2  # one failure retried, then success
+
+
+def test_paginate_raises_after_exhausting_retries(monkeypatch):
+    import pytest
+
+    import needledrop.connectors.apple_music as mod
+
+    monkeypatch.setattr(mod.time, "sleep", lambda *_: None)
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        return httpx.Response(500)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        list(_connector(handler).iter_library_albums())
+    assert calls["n"] == AppleMusicConnector.MAX_PAGE_RETRIES
+
+
+def test_paginate_does_not_retry_client_error(monkeypatch):
+    import pytest
+
+    import needledrop.connectors.apple_music as mod
+
+    monkeypatch.setattr(mod.time, "sleep", lambda *_: None)
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        return httpx.Response(404)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        list(_connector(handler).iter_library_albums())
+    assert calls["n"] == 1  # 4xx is not retried
+
+
 def test_search_catalog_parses_results():
     def handler(request):
         assert request.url.path == "/v1/catalog/us/search"

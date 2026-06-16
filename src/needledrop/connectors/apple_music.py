@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Iterator
 
 import httpx
@@ -21,6 +22,10 @@ from needledrop.connectors.apple_token import (
 )
 from needledrop.connectors.base import MusicConnector
 
+# Apple's library endpoints intermittently return 429/5xx on deep pagination
+# (more so with include=catalog on large libraries); these are retried with backoff.
+_RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
+
 
 class AppleMusicConnector(MusicConnector):
     """Reads the user's Apple Music library and searches the catalog.
@@ -30,6 +35,7 @@ class AppleMusicConnector(MusicConnector):
 
     BASE_URL = "https://api.music.apple.com"
     LIBRARY_PAGE_LIMIT = 100
+    MAX_PAGE_RETRIES = 5
 
     def __init__(
         self,
@@ -59,9 +65,26 @@ class AppleMusicConnector(MusicConnector):
         return headers
 
     def get_storefront(self) -> str:
-        response = self._client.get("/v1/me/storefront", headers=self._headers(user=True))
-        response.raise_for_status()
-        return response.json()["data"][0]["id"]
+        return self._get_json("/v1/me/storefront")["data"][0]["id"]
+
+    def _get_json(self, url: str) -> dict:
+        """GET a user-authorized URL, retrying transient 429/5xx with exponential backoff.
+
+        Non-retryable responses (and the final attempt) go through raise_for_status,
+        so a genuine error still surfaces — we just don't let one flaky page abort a
+        whole-library sync.
+        """
+        backoff = 1.0
+        for attempt in range(self.MAX_PAGE_RETRIES):
+            response = self._client.get(url, headers=self._headers(user=True))
+            final = attempt == self.MAX_PAGE_RETRIES - 1
+            if final or response.status_code not in _RETRYABLE_STATUS:
+                response.raise_for_status()
+                return response.json()
+            retry_after = response.headers.get("Retry-After", "")
+            time.sleep(float(retry_after) if retry_after.isdigit() else backoff)
+            backoff = min(backoff * 2, 30.0)
+        raise RuntimeError("unreachable")  # pragma: no cover
 
     def _paginate(self, path: str, *, include: str | None = None) -> Iterator[dict]:
         query = f"?limit={self.LIBRARY_PAGE_LIMIT}"
@@ -69,9 +92,7 @@ class AppleMusicConnector(MusicConnector):
             query += f"&include={include}"
         next_url: str | None = path + query
         while next_url:
-            response = self._client.get(next_url, headers=self._headers(user=True))
-            response.raise_for_status()
-            body = response.json()
+            body = self._get_json(next_url)
             yield from body.get("data", [])
             next_url = body.get("next")
 
