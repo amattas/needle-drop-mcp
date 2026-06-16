@@ -11,7 +11,9 @@ duration of an actual query.
 Catalog browse (`search_catalog`) reads the Apple Music catalog via an injected
 callable. The Apple-library-mutating tools (`add_album`, `remove_album`,
 `create_playlist`) default to a dry-run preview and only apply when called with
-`dry_run=false` and a `mutator` is injected.
+`dry_run=false` and a `mutator` is injected. On a real apply they also reflect the
+change into the local DB (mark removed / record the playlist / reconcile the added
+album) so the analyses stay correct without a full resync.
 
 stdio transport speaks MCP over stdout — never print() to stdout from here.
 """
@@ -51,6 +53,12 @@ from needledrop.db.repository import (
     list_unmatched as _list_unmatched,
 )
 from needledrop.db.repository import (
+    mark_library_item_removed as _mark_library_item_removed,
+)
+from needledrop.db.repository import (
+    record_library_item as _record_library_item,
+)
+from needledrop.db.repository import (
     reject_match as _reject_match,
 )
 from needledrop.db.repository import (
@@ -72,6 +80,7 @@ def create_server(
     sync_runner: Callable[[], dict] | None = None,
     catalog_search: Callable[[str, tuple[str, ...], int], dict] | None = None,
     mutator: object | None = None,
+    album_reconciler: Callable[[], dict] | None = None,
 ) -> FastMCP:
     """Build the NeedleDrop MCP server.
 
@@ -91,6 +100,15 @@ def create_server(
     ``create_playlist(name, *, description, track_ids) -> LibraryPlaylist``. The
     corresponding tools default to a dry-run preview and only apply when called with
     ``dry_run=False``; a real apply with no mutator injected raises.
+
+    On a real apply, mutations are reflected into the local DB so analyses stay
+    correct without a full resync: `remove_album` marks the album row removed and
+    `create_playlist` records the returned playlist. `add_album` is special — Apple's
+    add endpoint returns no library id, so the new album's id can only be learned by
+    re-reading the library; `album_reconciler` is an injected zero-arg callable that
+    re-pulls and upserts just the library albums (returning a summary dict). If it is
+    None, `add_album` instead flags ``resync_recommended`` and the album appears only
+    after the next `trigger_sync`.
     """
     mcp = FastMCP(name="needledrop")
 
@@ -225,7 +243,15 @@ def create_server(
         if mutator is None:
             raise RuntimeError("Mutations are not available: no mutator configured.")
         mutator.add_albums_to_library([catalog_album_id])
-        return {"dry_run": False, "added_album": catalog_album_id}
+        result = {"dry_run": False, "added_album": catalog_album_id}
+        # Apple's add endpoint returns no library id, so re-read the albums to learn
+        # the new id and match it into the DB (far cheaper than a full resync). With
+        # no reconciler wired, the album only appears after the next trigger_sync.
+        if album_reconciler is not None:
+            result["reconciled"] = album_reconciler()
+        else:
+            result["resync_recommended"] = True
+        return result
 
     @mcp.tool
     def remove_album(library_album_id: str, dry_run: bool = True) -> dict:
@@ -243,7 +269,20 @@ def create_server(
         if mutator is None:
             raise RuntimeError("Mutations are not available: no mutator configured.")
         mutator.remove_album_from_library(library_album_id)
-        return {"dry_run": False, "removed_album": library_album_id}
+        # Reflect the removal locally (the tool's library_album_id IS the album row's
+        # service_item_id) so analyses drop it at once. Note: Apple also removes the
+        # album's tracks, but we don't persist a track->album link, so the track rows
+        # linger as 'present' until the next sync.
+        removed = _q(
+            lambda con: _mark_library_item_removed(
+                con, service="apple_music", service_item_id=library_album_id, item_type="album"
+            )
+        )
+        return {
+            "dry_run": False,
+            "removed_album": library_album_id,
+            "db_rows_marked_removed": removed,
+        }
 
     @mcp.tool
     def create_playlist(
@@ -266,6 +305,17 @@ def create_server(
         if mutator is None:
             raise RuntimeError("Mutations are not available: no mutator configured.")
         playlist = mutator.create_playlist(name, description=description, track_ids=track_ids)
+        # Apple returns the new playlist's library id, so record it locally — it then
+        # shows up in the library without a resync.
+        _q(
+            lambda con: _record_library_item(
+                con,
+                service="apple_music",
+                service_item_id=playlist.id,
+                item_type="playlist",
+                seen_at=datetime.now(),
+            )
+        )
         return {"dry_run": False, "created_playlist": playlist.model_dump(mode="json")}
 
     return mcp

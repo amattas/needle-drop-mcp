@@ -354,6 +354,24 @@ def mark_unseen_removed(
     return len(rows)
 
 
+def mark_library_item_removed(
+    con: duckdb.DuckDBPyConnection, *, service: str, service_item_id: str, item_type: str
+) -> int:
+    """Mark a single present library item removed (e.g. after a real remove_album).
+
+    Returns the number of rows updated (0 if it was absent or already removed). This
+    reflects a server-driven mutation locally so analyses drop the item immediately,
+    without waiting for the next full sync.
+    """
+    rows = con.execute(
+        "UPDATE library_items SET status = 'removed' "
+        "WHERE service = ? AND service_item_id = ? AND item_type = ? AND status = 'present' "
+        "RETURNING id",
+        [service, service_item_id, item_type],
+    ).fetchall()
+    return len(rows)
+
+
 def get_library_summary(con: duckdb.DuckDBPyConnection) -> dict:
     """Counts of present library items by type, plus matched/unmatched totals."""
     summary: dict[str, int] = {}

@@ -10,6 +10,7 @@ from needledrop.db.repository import (
     get_library_summary,
     get_review_queue,
     list_unmatched,
+    mark_library_item_removed,
     mark_unseen_removed,
     record_library_item,
     reject_match,
@@ -267,6 +268,30 @@ def test_sync_run_lifecycle():
     assert row[0] == "completed"
     assert row[1] == completed
     assert _json.loads(row[2]) == {"albums": 3}
+
+
+def test_mark_library_item_removed_flips_present_to_removed():
+    con = _con()
+    now = datetime(2026, 6, 15, 12, 0, 0)
+    item_id = record_library_item(
+        con, service="apple_music", service_item_id="l.x", item_type="album", seen_at=now,
+    )
+    count = mark_library_item_removed(
+        con, service="apple_music", service_item_id="l.x", item_type="album"
+    )
+    assert count == 1
+    status = con.execute(
+        "SELECT status FROM library_items WHERE id = ?", [item_id]
+    ).fetchone()[0]
+    assert status == "removed"
+
+
+def test_mark_library_item_removed_returns_zero_when_absent():
+    con = _con()
+    count = mark_library_item_removed(
+        con, service="apple_music", service_item_id="nope", item_type="album"
+    )
+    assert count == 0
 
 
 def test_mark_unseen_removed():

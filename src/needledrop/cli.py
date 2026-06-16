@@ -19,7 +19,7 @@ from needledrop.connectors.apple_token import (
 from needledrop.db.duckdb_store import open_db
 from needledrop.mcp_server import create_server
 from needledrop.musicbrainz.importer import import_musicbrainz
-from needledrop.services.sync import sync_library
+from needledrop.services.sync import reconcile_albums, sync_library
 
 app = typer.Typer(help="NeedleDrop — intelligent music library management", no_args_is_help=True)
 mb_app = typer.Typer(help="MusicBrainz authority data", no_args_is_help=True)
@@ -100,6 +100,12 @@ def mcp() -> None:
         with closing(open_db(settings.db_path)) as con:
             return sync_library(_connector(), con, now=datetime.now())
 
+    def album_reconciler() -> dict:
+        # After a server-driven add_album, re-pull just the library albums to learn
+        # Apple's newly-assigned library id and match it in — avoids a full resync.
+        with closing(open_db(settings.db_path)) as con:
+            return reconcile_albums(_connector(), con, now=datetime.now())
+
     def catalog_search(term: str, types: tuple[str, ...], limit: int) -> dict:
         connector = _connector()
         if "storefront" not in state:
@@ -120,7 +126,11 @@ def mcp() -> None:
             )
 
     server = create_server(
-        _connect, sync_runner=sync_runner, catalog_search=catalog_search, mutator=_LazyMutator()
+        _connect,
+        sync_runner=sync_runner,
+        catalog_search=catalog_search,
+        mutator=_LazyMutator(),
+        album_reconciler=album_reconciler,
     )
     server.run(transport="stdio", show_banner=False)
 

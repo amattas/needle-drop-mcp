@@ -2,7 +2,7 @@ from datetime import datetime
 
 from needledrop.connectors.apple_models import LibraryAlbum, LibrarySong
 from needledrop.db.duckdb_store import connect, init_schema
-from needledrop.services.sync import diff_sync, sync_library
+from needledrop.services.sync import diff_sync, reconcile_albums, sync_library
 
 
 def _seed_mb(con):
@@ -140,6 +140,51 @@ def test_diff_sync_returns_latest_completed_run_summary():
 def test_diff_sync_no_runs_returns_empty():
     con = _db()
     assert diff_sync(con) == {}
+
+
+def test_reconcile_albums_upserts_albums_without_touching_songs():
+    con = _db()
+    now = datetime(2026, 6, 15, 12, 0, 0)
+    summary = reconcile_albums(
+        FakeConnector(albums=[
+            LibraryAlbum(id="l.new", name="OK Computer", artist_name="Radiohead",
+                         upc="0724385522123")
+        ]),
+        con,
+        now=now,
+    )
+    assert summary == {"albums_seen": 1}
+    row = con.execute(
+        "SELECT li.status, li.match_method, a.release_group_mbid "
+        "FROM library_items li JOIN albums a ON li.canonical_id = a.id "
+        "WHERE li.service_item_id = 'l.new'"
+    ).fetchone()
+    assert row == ("present", "upc", "gid-okc")
+
+
+def test_reconcile_albums_does_not_remove_unseen_items():
+    con = _db()
+    # A previously-synced song that the album-only reconcile won't re-pull must
+    # stay 'present' — reconcile_albums has no removal pass.
+    sync_library(
+        FakeConnector(songs=[
+            LibrarySong(id="l.song", name="Karma Police", artist_name="Radiohead")
+        ]),
+        con,
+        now=datetime(2026, 6, 1, 10, 0, 0),
+    )
+    reconcile_albums(
+        FakeConnector(albums=[
+            LibraryAlbum(id="l.new", name="OK Computer", artist_name="Radiohead",
+                         upc="0724385522123")
+        ]),
+        con,
+        now=datetime(2026, 6, 15, 12, 0, 0),
+    )
+    status = con.execute(
+        "SELECT status FROM library_items WHERE service_item_id = 'l.song'"
+    ).fetchone()[0]
+    assert status == "present"
 
 
 def test_sync_links_songs_to_album_and_persists_total_tracks():

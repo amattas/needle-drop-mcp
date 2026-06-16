@@ -536,6 +536,92 @@ def test_mutating_tool_dry_run_works_without_mutator():
     assert result["dry_run"] is True
 
 
+def test_add_album_tool_runs_album_reconciler_when_applying():
+    con = _fresh_con()
+    mut = _FakeMutator()
+    calls = []
+
+    def reconciler():
+        calls.append(True)
+        return {"albums_seen": 7}
+
+    result = _call(
+        _server(con, mutator=mut, album_reconciler=reconciler),
+        "add_album",
+        {"catalog_album_id": "c.1", "dry_run": False},
+    )
+    assert mut.added == [["c.1"]]
+    assert calls == [True]  # the new album is reconciled into the DB, not left for a full resync
+    assert result["reconciled"] == {"albums_seen": 7}
+
+
+def test_add_album_tool_flags_resync_when_no_reconciler():
+    con = _fresh_con()
+    mut = _FakeMutator()
+    result = _call(
+        _server(con, mutator=mut),
+        "add_album",
+        {"catalog_album_id": "c.1", "dry_run": False},
+    )
+    assert mut.added == [["c.1"]]
+    assert result["resync_recommended"] is True
+
+
+def test_add_album_dry_run_skips_reconciler():
+    con = _fresh_con()
+    mut = _FakeMutator()
+    calls = []
+
+    def reconciler():
+        calls.append(True)
+        return {"albums_seen": 0}
+
+    result = _call(
+        _server(con, mutator=mut, album_reconciler=reconciler),
+        "add_album",
+        {"catalog_album_id": "c.1"},
+    )
+    assert result["dry_run"] is True
+    assert mut.added == []
+    assert calls == []  # a dry-run preview must not touch Apple or re-read the library
+
+
+def test_remove_album_tool_marks_db_row_removed():
+    con = _fresh_con()
+    con.execute(
+        "INSERT INTO library_items (service, service_item_id, item_type, status) "
+        "VALUES ('apple_music', 'l.9', 'album', 'present')"
+    )
+    mut = _FakeMutator()
+    result = _call(
+        _server(con, mutator=mut),
+        "remove_album",
+        {"library_album_id": "l.9", "dry_run": False},
+    )
+    assert mut.removed == ["l.9"]
+    status = con.execute(
+        "SELECT status FROM library_items WHERE service_item_id = 'l.9'"
+    ).fetchone()[0]
+    assert status == "removed"
+    assert result["removed_album"] == "l.9"
+
+
+def test_create_playlist_tool_records_library_item():
+    con = _fresh_con()
+    mut = _FakeMutator()
+    _call(
+        _server(con, mutator=mut),
+        "create_playlist",
+        {"name": "Cleanup", "dry_run": False},
+    )
+    # The returned playlist (library id p.1) is recorded locally, so it shows up
+    # in the library without a resync.
+    row = con.execute(
+        "SELECT item_type, status FROM library_items WHERE service_item_id = 'p.1'"
+    ).fetchone()
+    assert row == ("playlist", "present")
+
+
 def test_get_album_detail_tool_returns_owned_editions():
     con = _fresh_con()
     for title, apple in [("OK Computer", "la.std"), ("OK Computer (Deluxe)", "la.dlx")]:

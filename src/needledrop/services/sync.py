@@ -127,6 +127,31 @@ def _sync_track(con, song, *, now, service) -> None:
     )
 
 
+def reconcile_albums(
+    connector: MusicConnector,
+    con: duckdb.DuckDBPyConnection,
+    *,
+    now: datetime,
+    service: str = "apple_music",
+) -> dict:
+    """Re-pull and upsert just the library's albums (no songs/playlists, no removal pass).
+
+    Used after a server-driven add_album: Apple's add endpoint returns no library id,
+    so the only way to learn the newly-assigned id (and match it) is to re-read the
+    library. Pulling albums alone is far cheaper than a full sync and avoids the
+    phantom-duplicate that an optimistic insert keyed by the catalog id would cause.
+    Deliberately omits the unseen-removed reconciliation: this is an additive refresh,
+    not a full snapshot, so it must not mark un-pulled songs/playlists removed.
+
+    Returns {"albums_seen": n}.
+    """
+    seen = 0
+    for album in connector.iter_library_albums():
+        _sync_album(con, album, now=now, service=service)
+        seen += 1
+    return {"albums_seen": seen}
+
+
 def diff_sync(con: duckdb.DuckDBPyConnection) -> dict:
     """Return the most recent completed sync run's summary (its added/removed/present diff)."""
     row = con.execute(
