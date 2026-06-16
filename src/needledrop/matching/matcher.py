@@ -15,6 +15,7 @@ from dataclasses import dataclass
 
 import duckdb
 
+from needledrop.db.duckdb_store import table_exists
 from needledrop.matching.scoring import title_score
 from needledrop.models.enums import CandidateKind, MatchMethod
 from needledrop.models.match import MatchCandidate, MatchResult
@@ -42,6 +43,12 @@ class TrackQuery:
 def match_album(
     con: duckdb.DuckDBPyConnection, query: AlbumQuery, *, threshold: float = DEFAULT_THRESHOLD
 ) -> MatchResult:
+    # No MusicBrainz authority imported yet → nothing to match against. Degrade to
+    # "no match" so sync still runs (items are recorded unmatched and pick up a
+    # match on a re-sync after `mb import`). All mb_* tables materialize together,
+    # so mb_release_group is a sufficient sentinel.
+    if not table_exists(con, "mb_release_group"):
+        return MatchResult(mbid=None, confidence=0.0, method=MatchMethod.NONE)
     if query.upc:
         row = con.execute(
             "SELECT rg.gid FROM mb_release r "
@@ -70,6 +77,9 @@ def match_album(
 def match_track(
     con: duckdb.DuckDBPyConnection, query: TrackQuery, *, threshold: float = DEFAULT_THRESHOLD
 ) -> MatchResult:
+    # See match_album: degrade to "no match" when the MusicBrainz authority is absent.
+    if not table_exists(con, "mb_release_group"):
+        return MatchResult(mbid=None, confidence=0.0, method=MatchMethod.NONE)
     if query.isrc:
         row = con.execute(
             "SELECT rec.gid FROM mb_isrc i "

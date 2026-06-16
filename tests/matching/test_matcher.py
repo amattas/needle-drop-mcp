@@ -116,3 +116,27 @@ def test_match_track_no_match_returns_candidates(con):
     assert result.mbid is None
     assert result.method == MatchMethod.NONE
     assert {c.candidate_mbid for c in result.candidates} == {"gid-karma"}
+
+
+def test_match_album_without_musicbrainz_degrades_to_no_match():
+    # No mb_* tables (MusicBrainz not imported) — must not raise; degrade gracefully
+    # so sync can run before `mb import`.
+    bare = duckdb.connect(":memory:")
+    result = match_album(
+        bare, AlbumQuery(title="OK Computer", artist_name="Radiohead", upc="0724385522123")
+    )
+    assert result.mbid is None
+    assert result.method == MatchMethod.NONE
+    assert result.candidates == []
+
+
+def test_match_track_without_musicbrainz_degrades_to_no_match():
+    from needledrop.matching.matcher import TrackQuery, match_track
+
+    bare = duckdb.connect(":memory:")
+    result = match_track(
+        bare, TrackQuery(title="Karma Police", artist_name="Radiohead", isrc="GBAYE9700116")
+    )
+    assert result.mbid is None
+    assert result.method == MatchMethod.NONE
+    assert result.candidates == []
