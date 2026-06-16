@@ -4,6 +4,7 @@ from datetime import datetime
 from needledrop.db.duckdb_store import connect, init_schema
 from needledrop.db.repository import (
     complete_sync_run,
+    find_or_create_song_album,
     get_findings,
     get_library_albums,
     get_library_summary,
@@ -603,3 +604,35 @@ def test_reject_match_rejects_all_pending(tmp_path):
         "SELECT match_method FROM library_items WHERE id = ?", [item_id]
     ).fetchone()[0] == "none"
     assert get_review_queue(con) == []
+
+
+def test_upsert_album_persists_and_preserves_total_tracks(tmp_path):
+    con = connect(tmp_path / "library.duckdb")
+    init_schema(con)
+    album_id = upsert_album(con, title="Dookie", total_tracks=15,
+                            external_ids={"apple": "a.1"})
+    assert con.execute(
+        "SELECT total_tracks FROM albums WHERE id = ?", [album_id]
+    ).fetchone()[0] == 15
+    same = upsert_album(con, title="Dookie", external_ids={"apple": "a.1"})
+    assert same == album_id
+    assert con.execute(
+        "SELECT total_tracks FROM albums WHERE id = ?", [album_id]
+    ).fetchone()[0] == 15
+
+
+def test_find_or_create_song_album_prefers_apple_row_then_reuses(tmp_path):
+    con = connect(tmp_path / "library.duckdb")
+    init_schema(con)
+    con.execute("INSERT INTO artists (canonical_name) VALUES ('Green Day')")
+    artist_id = con.execute("SELECT id FROM artists").fetchone()[0]
+    owned = upsert_album(con, title="Dookie", artist_id=artist_id,
+                         external_ids={"apple": "a.dookie"})
+    linked = find_or_create_song_album(con, artist_id=artist_id, title="Dookie")
+    assert linked == owned
+    first = find_or_create_song_album(con, artist_id=artist_id, title="Kerplunk")
+    second = find_or_create_song_album(con, artist_id=artist_id, title="Kerplunk")
+    assert first == second
+    assert con.execute(
+        "SELECT count(*) FROM albums WHERE title = 'Kerplunk'"
+    ).fetchone()[0] == 1

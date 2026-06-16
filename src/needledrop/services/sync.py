@@ -10,6 +10,7 @@ import duckdb
 from needledrop.connectors.base import MusicConnector
 from needledrop.db.repository import (
     complete_sync_run,
+    find_or_create_song_album,
     mark_unseen_removed,
     record_library_item,
     save_match_candidates,
@@ -79,6 +80,7 @@ def _sync_album(con, album, *, now, service) -> None:
         artist_id=artist_id,
         release_group_mbid=result.mbid,
         version_class=classify_album_version(album.name).value,
+        total_tracks=album.track_count,
         external_ids={"apple": album.id},
     )
     item_id = record_library_item(
@@ -95,6 +97,11 @@ def _sync_track(con, song, *, now, service) -> None:
     artist_id = (
         upsert_artist(con, canonical_name=song.artist_name) if song.artist_name else None
     )
+    album_id = (
+        find_or_create_song_album(con, artist_id=artist_id, title=song.album_name)
+        if song.album_name
+        else None
+    )
     result = match_track(
         con, TrackQuery(title=song.name, artist_name=song.artist_name, isrc=song.isrc)
     )
@@ -102,8 +109,12 @@ def _sync_track(con, song, *, now, service) -> None:
         con,
         title=song.name,
         artist_id=artist_id,
+        album_id=album_id,
         recording_mbid=result.mbid,
         isrc=song.isrc,
+        disc_number=song.disc_number,
+        track_number=song.track_number,
+        duration_ms=song.duration_ms,
         external_ids={"apple": song.id},
     )
     item_id = record_library_item(

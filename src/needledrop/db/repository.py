@@ -85,6 +85,7 @@ def upsert_album(
     release_group_mbid: str | None = None,
     release_mbid: str | None = None,
     version_class: str | None = None,
+    total_tracks: int | None = None,
     external_ids: dict[str, str] | None = None,
 ) -> int:
     """Insert or update an album, deduping by release (edition) MBID then Apple external id.
@@ -103,11 +104,17 @@ def upsert_album(
         ).fetchone()
         if row:
             con.execute(
-                "UPDATE albums SET title = ?, artist_id = COALESCE(?, artist_id), "
+                "UPDATE albums SET title = ?, "
                 "release_group_mbid = COALESCE(?, release_group_mbid), "
-                "version_class = COALESCE(?, version_class), external_ids_json = ? WHERE id = ?",
-                [title, artist_id, release_group_mbid, version_class, ext_json, row[0]],
+                "version_class = COALESCE(?, version_class), "
+                "total_tracks = COALESCE(?, total_tracks), external_ids_json = ? WHERE id = ?",
+                [title, release_group_mbid, version_class, total_tracks, ext_json, row[0]],
             )
+            if artist_id is not None:
+                con.execute(
+                    "UPDATE albums SET artist_id = ? WHERE id = ? AND artist_id IS NULL",
+                    [artist_id, row[0]],
+                )
             return row[0]
 
     apple_id = external_ids.get("apple")
@@ -118,20 +125,54 @@ def upsert_album(
         ).fetchone()
         if row:
             con.execute(
-                "UPDATE albums SET title = ?, artist_id = COALESCE(?, artist_id), "
+                "UPDATE albums SET title = ?, "
                 "release_group_mbid = COALESCE(?, release_group_mbid), "
                 "release_mbid = COALESCE(?, release_mbid), "
-                "version_class = COALESCE(?, version_class), external_ids_json = ? WHERE id = ?",
-                [title, artist_id, release_group_mbid, release_mbid, version_class,
+                "version_class = COALESCE(?, version_class), "
+                "total_tracks = COALESCE(?, total_tracks), external_ids_json = ? WHERE id = ?",
+                [title, release_group_mbid, release_mbid, version_class, total_tracks,
                  ext_json, row[0]],
             )
+            if artist_id is not None:
+                con.execute(
+                    "UPDATE albums SET artist_id = ? WHERE id = ? AND artist_id IS NULL",
+                    [artist_id, row[0]],
+                )
             return row[0]
 
     return con.execute(
         "INSERT INTO albums "
-        "(release_group_mbid, release_mbid, artist_id, title, version_class, external_ids_json) "
-        "VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
-        [release_group_mbid, release_mbid, artist_id, title, version_class, ext_json],
+        "(release_group_mbid, release_mbid, artist_id, title, version_class, total_tracks, "
+        "external_ids_json) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id",
+        [release_group_mbid, release_mbid, artist_id, title, version_class, total_tracks,
+         ext_json],
+    ).fetchone()[0]
+
+
+def find_or_create_song_album(
+    con: duckdb.DuckDBPyConnection, *, artist_id: int | None, title: str
+) -> int:
+    """Resolve the canonical album id for a library song, by (artist, title).
+
+    Prefers an existing album already tied to an Apple library-album item (so songs
+    fold into the album you own); otherwise reuses an existing song-only row or
+    inserts a minimal one. This is a last-resort, name-based link used ONLY for
+    song->album association -- it deliberately does NOT touch upsert_album's
+    edition-dedup (release_mbid / Apple-id), so distinct editions stay separate.
+    """
+    row = con.execute(
+        "SELECT id FROM albums "
+        "WHERE (artist_id = ? OR (artist_id IS NULL AND ? IS NULL)) AND title = ? "
+        "ORDER BY (json_extract_string(external_ids_json, '$.apple') IS NOT NULL) DESC, id "
+        "LIMIT 1",
+        [artist_id, artist_id, title],
+    ).fetchone()
+    if row:
+        return row[0]
+    return con.execute(
+        "INSERT INTO albums (artist_id, title) VALUES (?, ?) RETURNING id",
+        [artist_id, title],
     ).fetchone()[0]
 
 

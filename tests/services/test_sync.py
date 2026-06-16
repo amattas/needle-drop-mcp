@@ -140,3 +140,37 @@ def test_diff_sync_returns_latest_completed_run_summary():
 def test_diff_sync_no_runs_returns_empty():
     con = _db()
     assert diff_sync(con) == {}
+
+
+def test_sync_links_songs_to_album_and_persists_total_tracks():
+    con = _db()
+    now = datetime(2026, 6, 15, 12, 0, 0)
+    connector = FakeConnector(
+        albums=[
+            LibraryAlbum(id="a.dookie", name="Dookie", artist_name="Green Day", track_count=2)
+        ],
+        songs=[
+            LibrarySong(id="s.bc", name="Basket Case", artist_name="Green Day",
+                        album_name="Dookie", track_number=7, disc_number=1),
+            LibrarySong(id="s.wt", name="When I Come Around", artist_name="Green Day",
+                        album_name="Dookie", track_number=12, disc_number=1),
+        ],
+    )
+    sync_library(connector, con, now=now)
+
+    dookie_id, total_tracks = con.execute(
+        "SELECT id, total_tracks FROM albums WHERE title = 'Dookie'"
+    ).fetchone()
+    assert total_tracks == 2
+
+    linked_count = con.execute(
+        "SELECT count(*) FROM tracks WHERE album_id = ?", [dookie_id]
+    ).fetchone()[0]
+    assert linked_count == 2
+
+    # Second run must not create a duplicate Dookie album row.
+    sync_library(connector, con, now=datetime(2026, 6, 16, 12, 0, 0))
+    album_count = con.execute(
+        "SELECT count(*) FROM albums WHERE title = 'Dookie'"
+    ).fetchone()[0]
+    assert album_count == 1
