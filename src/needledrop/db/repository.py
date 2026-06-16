@@ -281,16 +281,34 @@ def record_library_item(
     match_confidence: float | None = None,
     match_method: str = "none",
 ) -> int:
-    """Insert or update a library item (present), preserving added_at across runs."""
+    """Insert or update a library item (present), preserving added_at across runs.
+
+    Implemented SELECT-then-UPDATE/INSERT rather than as an `ON CONFLICT DO UPDATE`:
+    DuckDB 1.5.3 raises a ConstraintException on any upsert/UPDATE carrying a RETURNING
+    clause when it touches a library_items row already referenced by match_candidates
+    (the same FK-on-referenced-row limitation worked around in upsert_album). The
+    re-record path of every sync hits exactly that, so we look the row up first, then
+    UPDATE it in place without RETURNING (proven safe on a referenced row); only the
+    fresh-insert path uses RETURNING, where the new row cannot yet be FK-referenced.
+    """
+    row = con.execute(
+        "SELECT id FROM library_items "
+        "WHERE service = ? AND service_item_id = ? AND item_type = ?",
+        [service, service_item_id, item_type],
+    ).fetchone()
+    if row:
+        # added_at deliberately omitted from SET, preserving the original add time.
+        con.execute(
+            "UPDATE library_items SET canonical_id = ?, match_confidence = ?, "
+            "match_method = ?, last_seen_at = ?, status = 'present' WHERE id = ?",
+            [canonical_id, match_confidence, match_method, seen_at, row[0]],
+        )
+        return row[0]
     return con.execute(
         "INSERT INTO library_items "
         "(service, service_item_id, item_type, canonical_id, match_confidence, match_method, "
         "added_at, last_seen_at, status) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'present') "
-        "ON CONFLICT (service, service_item_id, item_type) DO UPDATE SET "
-        "canonical_id = excluded.canonical_id, match_confidence = excluded.match_confidence, "
-        "match_method = excluded.match_method, last_seen_at = excluded.last_seen_at, "
-        "status = 'present' "
         "RETURNING id",
         [service, service_item_id, item_type, canonical_id, match_confidence, match_method,
          seen_at, seen_at],
@@ -343,15 +361,26 @@ def complete_sync_run(
 def mark_unseen_removed(
     con: duckdb.DuckDBPyConnection, *, service: str, run_started_at: datetime
 ) -> int:
-    """Mark still-present items not seen during this run as removed; returns the count."""
-    rows = con.execute(
+    """Mark still-present items not seen during this run as removed; returns the count.
+
+    Counted before the UPDATE rather than via `UPDATE ... RETURNING`: DuckDB 1.5.3
+    rejects a RETURNING clause on an UPDATE that touches a library_items row referenced
+    by match_candidates. The plain UPDATE below is safe on a referenced row; the count
+    matches it because this write path is single-connection and serialized.
+    """
+    count = con.execute(
+        "SELECT count(*) FROM library_items "
+        "WHERE service = ? AND status = 'present' "
+        "AND (last_seen_at IS NULL OR last_seen_at < ?)",
+        [service, run_started_at],
+    ).fetchone()[0]
+    con.execute(
         "UPDATE library_items SET status = 'removed' "
         "WHERE service = ? AND status = 'present' "
-        "AND (last_seen_at IS NULL OR last_seen_at < ?) "
-        "RETURNING id",
+        "AND (last_seen_at IS NULL OR last_seen_at < ?)",
         [service, run_started_at],
-    ).fetchall()
-    return len(rows)
+    )
+    return count
 
 
 def mark_library_item_removed(
@@ -362,14 +391,22 @@ def mark_library_item_removed(
     Returns the number of rows updated (0 if it was absent or already removed). This
     reflects a server-driven mutation locally so analyses drop the item immediately,
     without waiting for the next full sync.
+
+    Counted before the UPDATE rather than via `UPDATE ... RETURNING`: DuckDB 1.5.3
+    rejects a RETURNING clause on an UPDATE that touches a library_items row referenced
+    by match_candidates (see mark_unseen_removed / record_library_item).
     """
-    rows = con.execute(
-        "UPDATE library_items SET status = 'removed' "
-        "WHERE service = ? AND service_item_id = ? AND item_type = ? AND status = 'present' "
-        "RETURNING id",
+    count = con.execute(
+        "SELECT count(*) FROM library_items "
+        "WHERE service = ? AND service_item_id = ? AND item_type = ? AND status = 'present'",
         [service, service_item_id, item_type],
-    ).fetchall()
-    return len(rows)
+    ).fetchone()[0]
+    con.execute(
+        "UPDATE library_items SET status = 'removed' "
+        "WHERE service = ? AND service_item_id = ? AND item_type = ? AND status = 'present'",
+        [service, service_item_id, item_type],
+    )
+    return count
 
 
 def get_library_summary(con: duckdb.DuckDBPyConnection) -> dict:

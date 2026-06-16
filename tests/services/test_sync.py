@@ -107,6 +107,27 @@ def test_sync_marks_unseen_items_removed_across_runs():
     assert status == "removed"
 
 
+def test_resync_unmatched_album_with_candidates_does_not_crash():
+    # Regression: the second sync re-records an UNMATCHED album whose first pass saved
+    # match candidates. That re-record touches a library_items row now referenced by a
+    # match_candidates FK -- the case that broke trigger_sync / add_album in the real
+    # library (DuckDB 1.5.3 rejects a RETURNING upsert/UPDATE on a FK-referenced row).
+    con = _db()
+    album = LibraryAlbum(id="l.b1", name="In Rainbows", artist_name="Radiohead")
+    sync_library(FakeConnector(albums=[album]), con, now=datetime(2026, 6, 1, 10, 0, 0))
+    item_id = con.execute(
+        "SELECT id FROM library_items WHERE service_item_id = 'l.b1'"
+    ).fetchone()[0]
+    # Precondition: the first pass left a pending candidate referencing the item.
+    assert con.execute(
+        "SELECT count(*) FROM match_candidates WHERE library_item_id = ?", [item_id]
+    ).fetchone()[0] > 0
+    summary = sync_library(  # must not raise
+        FakeConnector(albums=[album]), con, now=datetime(2026, 6, 15, 12, 0, 0)
+    )
+    assert summary == {"added": 0, "removed": 0, "present": 1}
+
+
 def test_sync_matches_track_by_isrc():
     con = _db()
     con.execute("INSERT INTO mb_recording VALUES (5000, 'gid-karma', 'Karma Police', 10, 261000)")

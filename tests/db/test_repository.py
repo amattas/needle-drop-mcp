@@ -311,6 +311,75 @@ def test_mark_unseen_removed():
     assert statuses[fresh] == "present"
 
 
+def _add_candidate(con, item_id):
+    """Give a library item one pending match candidate (a child FK reference)."""
+    save_match_candidates(con, library_item_id=item_id, candidates=[
+        {"candidate_mbid": "rg-x", "candidate_kind": "release_group", "score": 0.8,
+         "method": "fuzzy"},
+    ])
+
+
+def test_record_library_item_reupserts_when_referenced_by_candidates():
+    # Regression: re-recording an item that already has match_candidates referencing it
+    # must not crash. DuckDB 1.5.3 rejects an `ON CONFLICT DO UPDATE ... RETURNING`
+    # touching a FK-referenced library_items row -- exactly what every re-sync does.
+    con = _con()
+    t1 = datetime(2026, 6, 1, 10, 0, 0)
+    t2 = datetime(2026, 6, 15, 12, 0, 0)
+    first = record_library_item(
+        con, service="apple_music", service_item_id="l.a1", item_type="album", seen_at=t1,
+    )
+    _add_candidate(con, first)
+    again = record_library_item(  # must not raise
+        con, service="apple_music", service_item_id="l.a1", item_type="album",
+        canonical_id=42, match_confidence=1.0, match_method="upc", seen_at=t2,
+    )
+    assert again == first
+    row = con.execute(
+        "SELECT added_at, last_seen_at, canonical_id, match_method FROM library_items WHERE id = ?",
+        [first],
+    ).fetchone()
+    assert row == (t1, t2, 42, "upc")
+
+
+def test_mark_unseen_removed_when_item_referenced_by_candidates():
+    # Regression: marking a stale item removed must not crash when a match_candidate
+    # references it (the `UPDATE ... RETURNING id` shape trips DuckDB 1.5.3's FK check).
+    con = _con()
+    old = datetime(2026, 6, 1, 10, 0, 0)
+    now = datetime(2026, 6, 15, 12, 0, 0)
+    stale = record_library_item(
+        con, service="apple_music", service_item_id="l.gone", item_type="album", seen_at=old,
+    )
+    _add_candidate(con, stale)
+    record_library_item(
+        con, service="apple_music", service_item_id="l.here", item_type="album", seen_at=now,
+    )
+    removed_count = mark_unseen_removed(con, service="apple_music", run_started_at=now)
+    assert removed_count == 1
+    assert con.execute(
+        "SELECT status FROM library_items WHERE id = ?", [stale]
+    ).fetchone()[0] == "removed"
+
+
+def test_mark_library_item_removed_when_referenced_by_candidates():
+    # Regression: remove_album marks the item removed; it must not crash when a
+    # match_candidate references that library item.
+    con = _con()
+    now = datetime(2026, 6, 15, 12, 0, 0)
+    item_id = record_library_item(
+        con, service="apple_music", service_item_id="l.x", item_type="album", seen_at=now,
+    )
+    _add_candidate(con, item_id)
+    count = mark_library_item_removed(
+        con, service="apple_music", service_item_id="l.x", item_type="album"
+    )
+    assert count == 1
+    assert con.execute(
+        "SELECT status FROM library_items WHERE id = ?", [item_id]
+    ).fetchone()[0] == "removed"
+
+
 def _seed_album(con, *, apple_id, title, rg_mbid, method, seen_at):
     artist_id = upsert_artist(con, canonical_name="Radiohead", mbid="mbid-r")
     album_id = upsert_album(
