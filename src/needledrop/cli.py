@@ -82,12 +82,24 @@ def serve() -> None:
     """Run the read-only MCP server over stdio."""
     settings = load_settings()
     con = open_db(settings.db_path)
+    state: dict = {}
+
+    def _connector() -> AppleMusicConnector:
+        if "connector" not in state:
+            state["connector"] = AppleMusicConnector.from_keystore()
+        return state["connector"]
 
     def sync_runner() -> dict:
-        connector = AppleMusicConnector.from_keystore()
-        return sync_library(connector, con, now=datetime.now())
+        return sync_library(_connector(), con, now=datetime.now())
 
-    server = create_server(con, sync_runner=sync_runner)
+    def catalog_search(term: str, types: tuple[str, ...], limit: int) -> dict:
+        connector = _connector()
+        if "storefront" not in state:
+            state["storefront"] = connector.get_storefront()
+        result = connector.search_catalog(state["storefront"], term, types, limit)
+        return result.model_dump(mode="json")
+
+    server = create_server(con, sync_runner=sync_runner, catalog_search=catalog_search)
     server.run(show_banner=False)
 
 

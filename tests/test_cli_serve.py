@@ -24,6 +24,17 @@ def test_serve_builds_and_runs_server():
     assert "sync_runner" in create_server_mock.call_args.kwargs
 
 
+def test_serve_wires_catalog_search():
+    with patch("needledrop.cli.load_settings") as load_settings_mock, \
+         patch("needledrop.cli.open_db"), \
+         patch("needledrop.cli.create_server") as create_server_mock:
+        load_settings_mock.return_value = MagicMock(db_path=":memory:")
+        create_server_mock.return_value = MagicMock()
+        result = runner.invoke(app, ["serve"])
+    assert result.exit_code == 0
+    assert "catalog_search" in create_server_mock.call_args.kwargs
+
+
 def test_serve_sync_runner_closure_invokes_sync_library():
     # Exercise the REAL sync_runner closure serve() builds (not an injected stub):
     # it must build the connector from the keystore and run sync_library against

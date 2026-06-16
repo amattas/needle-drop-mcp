@@ -51,6 +51,8 @@ from needledrop.db.repository import (
 from needledrop.db.repository import (
     search_library as _search_library,
 )
+from needledrop.discography import get_album_versions as _get_album_versions
+from needledrop.discography import get_artist_collection as _get_artist_collection
 from needledrop.services.cleanup import run_cleanup_scan as _run_cleanup_scan
 
 
@@ -58,6 +60,7 @@ def create_server(
     con: duckdb.DuckDBPyConnection,
     *,
     sync_runner: Callable[[], dict] | None = None,
+    catalog_search: Callable[[str, tuple[str, ...], int], dict] | None = None,
 ) -> FastMCP:
     """Build the read-only NeedleDrop MCP server over an open DuckDB connection.
 
@@ -65,6 +68,10 @@ def create_server(
     and returns its summary dict. It is injected (rather than built here) so the
     server stays decoupled from credentials and the network, and so tests can
     stub it. If it is None, `trigger_sync` raises.
+
+    `catalog_search` is an injected callable ``(term, types, limit) -> dict`` that
+    searches the Apple Music catalog. It is injected so the server stays decoupled
+    from credentials; if it is None, the `search_catalog` tool raises.
 
     All tools (and `sync_runner`) share this single `con`. That is safe only
     under the default stdio transport, which handles requests sequentially: a
@@ -144,6 +151,25 @@ def create_server(
     def reject_match(library_item_id: int) -> dict:
         """Reject all pending candidates for a library item; returns the count rejected."""
         return {"rejected": _reject_match(con, library_item_id=library_item_id)}
+
+    @mcp.tool
+    def get_artist_collection(artist_mbid: str) -> list[dict]:
+        """An artist's full release-group discography (MusicBrainz), flagged by ownership."""
+        return _get_artist_collection(con, artist_mbid)
+
+    @mcp.tool
+    def get_album_versions(release_group_mbid: str) -> list[dict]:
+        """All release editions of a release-group (MusicBrainz), flagged by ownership."""
+        return _get_album_versions(con, release_group_mbid)
+
+    @mcp.tool
+    def search_catalog(term: str, types: list[str] | None = None, limit: int = 25) -> dict:
+        """Search the Apple Music catalog (albums/songs) by text."""
+        if catalog_search is None:
+            raise RuntimeError(
+                "Catalog search is not available: no catalog_search configured for this server."
+            )
+        return catalog_search(term, tuple(types) if types else ("albums", "songs"), limit)
 
     @mcp.tool
     def trigger_sync() -> dict:

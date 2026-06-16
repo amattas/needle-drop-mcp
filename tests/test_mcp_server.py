@@ -87,6 +87,9 @@ def test_server_exposes_expected_tools():
         "list_review_queue",
         "resolve_match",
         "reject_match",
+        "get_artist_collection",
+        "get_album_versions",
+        "search_catalog",
         "trigger_sync",
     }.issubset(names)
 
@@ -332,3 +335,47 @@ def test_find_missing_core_albums_tool_with_mb_data():
     findings = _call(create_server(con), "find_missing_core_albums")
     assert len(findings) >= 1
     assert findings[0]["finding_type"] == "missing_core_album"
+
+
+def test_get_artist_collection_tool_returns_discography():
+    con = _fresh_con()
+    con.execute("CREATE TABLE mb_artist (id INTEGER, gid VARCHAR, name VARCHAR)")
+    con.execute("CREATE TABLE mb_artist_credit_name (artist INTEGER, artist_credit INTEGER)")
+    con.execute(
+        "CREATE TABLE mb_release_group "
+        "(id INTEGER, gid VARCHAR, name VARCHAR, artist_credit INTEGER, type INTEGER)"
+    )
+    con.execute("CREATE TABLE mb_release_group_primary_type (id INTEGER, name VARCHAR)")
+    con.execute("INSERT INTO mb_artist VALUES (1, 'artist-rh', 'Radiohead')")
+    con.execute("INSERT INTO mb_artist_credit_name VALUES (1, 10)")
+    con.execute("INSERT INTO mb_release_group_primary_type VALUES (1, 'Album')")
+    con.execute("INSERT INTO mb_release_group VALUES (100, 'rg-kida', 'Kid A', 10, 1)")
+    result = _call(create_server(con), "get_artist_collection", {"artist_mbid": "artist-rh"})
+    assert [r["title"] for r in result] == ["Kid A"]
+    assert result[0]["owned"] is False
+
+
+def test_search_catalog_tool_uses_injected_callable():
+    con = _fresh_con()
+    calls = []
+
+    def catalog_search(term, types, limit):
+        calls.append((term, types, limit))
+        return {"albums": [{"id": "a.1", "name": "Dookie"}], "songs": []}
+
+    server = create_server(con, catalog_search=catalog_search)
+    result = _call(server, "search_catalog", {"term": "dookie"})
+    assert calls == [("dookie", ("albums", "songs"), 25)]
+    assert result["albums"][0]["name"] == "Dookie"
+
+
+def test_search_catalog_tool_without_callable_errors():
+    con = _fresh_con()
+    from fastmcp.exceptions import ToolError
+
+    async def go():
+        async with Client(create_server(con)) as client:
+            await client.call_tool("search_catalog", {"term": "x"})
+
+    with pytest.raises(ToolError):
+        asyncio.run(go())
