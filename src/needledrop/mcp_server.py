@@ -52,8 +52,10 @@ from needledrop.db.repository import (
 from needledrop.db.repository import (
     search_library as _search_library,
 )
+from needledrop.discography import get_album_detail as _get_album_detail
 from needledrop.discography import get_album_versions as _get_album_versions
 from needledrop.discography import get_artist_collection as _get_artist_collection
+from needledrop.discography import get_song_detail as _get_song_detail
 from needledrop.services.cleanup import run_cleanup_scan as _run_cleanup_scan
 
 
@@ -170,6 +172,17 @@ def create_server(
     def get_album_versions(release_group_mbid: str) -> list[dict]:
         """All release editions of a release-group (MusicBrainz), flagged by ownership."""
         return _get_album_versions(con, release_group_mbid)
+
+    @mcp.tool
+    def get_song_detail(recording_mbid: str) -> dict:
+        """Where a recording lives: owned library albums + release-groups it appears on."""
+        return _get_song_detail(con, recording_mbid)
+
+    @mcp.tool
+    def get_album_detail(release_group_mbid: str) -> dict:
+        """Consolidation view: owned editions of a release-group (with Apple ids +
+        completeness) and all available editions, to decide what to keep/remove/add."""
+        return _get_album_detail(con, release_group_mbid)
 
     @mcp.tool
     def search_catalog(term: str, types: list[str] | None = None, limit: int = 25) -> dict:

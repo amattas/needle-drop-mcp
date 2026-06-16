@@ -89,6 +89,8 @@ def test_server_exposes_expected_tools():
         "reject_match",
         "get_artist_collection",
         "get_album_versions",
+        "get_song_detail",
+        "get_album_detail",
         "search_catalog",
         "trigger_sync",
         "add_album",
@@ -481,3 +483,46 @@ def test_mutating_tool_dry_run_works_without_mutator():
     con = _fresh_con()
     result = _call(create_server(con), "remove_album", {"library_album_id": "l.9"})
     assert result["dry_run"] is True
+
+
+def test_get_album_detail_tool_returns_owned_editions():
+    con = _fresh_con()
+    for title, apple in [("OK Computer", "la.std"), ("OK Computer (Deluxe)", "la.dlx")]:
+        con.execute(
+            "INSERT INTO albums (title, release_group_mbid, external_ids_json) "
+            "VALUES (?, 'rg-okc', json_object('apple', ?))",
+            [title, apple],
+        )
+        album_id = con.execute("SELECT id FROM albums WHERE title = ?", [title]).fetchone()[0]
+        con.execute(
+            "INSERT INTO library_items "
+            "(service, service_item_id, item_type, canonical_id, status) "
+            "VALUES ('apple_music', ?, 'album', ?, 'present')",
+            [apple, album_id],
+        )
+    detail = _call(create_server(con), "get_album_detail", {"release_group_mbid": "rg-okc"})
+    titles = {e["title"] for e in detail["owned_editions"]}
+    assert titles == {"OK Computer", "OK Computer (Deluxe)"}
+    assert {e["apple_album_id"] for e in detail["owned_editions"]} == {"la.std", "la.dlx"}
+
+
+def test_get_song_detail_tool_returns_library_albums():
+    con = _fresh_con()
+    con.execute(
+        "INSERT INTO albums (title, external_ids_json) "
+        "VALUES ('OK Computer', json_object('apple', 'la.okc'))"
+    )
+    album_id = con.execute("SELECT id FROM albums").fetchone()[0]
+    con.execute(
+        "INSERT INTO library_items "
+        "(service, service_item_id, item_type, canonical_id, status) "
+        "VALUES ('apple_music', 'la.okc', 'album', ?, 'present')",
+        [album_id],
+    )
+    con.execute(
+        "INSERT INTO tracks (title, recording_mbid, album_id) VALUES ('Lucky', 'rec-lucky', ?)",
+        [album_id],
+    )
+    detail = _call(create_server(con), "get_song_detail", {"recording_mbid": "rec-lucky"})
+    assert [a["title"] for a in detail["library_albums"]] == ["OK Computer"]
+    assert detail["appears_on"] == []
