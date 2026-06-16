@@ -99,7 +99,21 @@ def serve() -> None:
         result = connector.search_catalog(state["storefront"], term, types, limit)
         return result.model_dump(mode="json")
 
-    server = create_server(con, sync_runner=sync_runner, catalog_search=catalog_search)
+    class _LazyMutator:
+        def add_albums_to_library(self, ids: list[str]) -> None:
+            _connector().add_albums_to_library(ids)
+
+        def remove_album_from_library(self, library_album_id: str) -> None:
+            _connector().remove_album_from_library(library_album_id)
+
+        def create_playlist(self, name, *, description=None, track_ids=None):
+            return _connector().create_playlist(
+                name, description=description, track_ids=track_ids
+            )
+
+    server = create_server(
+        con, sync_runner=sync_runner, catalog_search=catalog_search, mutator=_LazyMutator()
+    )
     server.run(show_banner=False)
 
 

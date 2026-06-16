@@ -62,8 +62,9 @@ def create_server(
     *,
     sync_runner: Callable[[], dict] | None = None,
     catalog_search: Callable[[str, tuple[str, ...], int], dict] | None = None,
+    mutator: object | None = None,
 ) -> FastMCP:
-    """Build the read-only NeedleDrop MCP server over an open DuckDB connection.
+    """Build the NeedleDrop MCP server over an open DuckDB connection.
 
     `sync_runner` is an injected zero-arg callable that performs a library sync
     and returns its summary dict. It is injected (rather than built here) so the
@@ -73,6 +74,13 @@ def create_server(
     `catalog_search` is an injected callable ``(term, types, limit) -> dict`` that
     searches the Apple Music catalog. It is injected so the server stays decoupled
     from credentials; if it is None, the `search_catalog` tool raises.
+
+    `mutator` exposes ``add_albums_to_library(ids)``,
+    ``remove_album_from_library(library_album_id)``, and
+    ``create_playlist(name, *, description, track_ids) -> LibraryPlaylist``.
+    The corresponding tools (`add_album`, `remove_album`, `create_playlist`) default
+    to a dry-run preview and only apply when called with ``dry_run=False``. If
+    ``dry_run=False`` is requested but no mutator is injected, the tool raises.
 
     All tools (and `sync_runner`) share this single `con`. That is safe only
     under the default stdio transport, which handles requests sequentially: a
@@ -180,5 +188,60 @@ def create_server(
                 "Sync is not available: no sync_runner configured for this server."
             )
         return sync_runner()
+
+    @mcp.tool
+    def add_album(catalog_album_id: str, dry_run: bool = True) -> dict:
+        """Add a catalog album to your Apple Music library.
+
+        Defaults to a dry-run preview. Pass dry_run=false to APPLY the change to your
+        real library.
+        """
+        if dry_run:
+            return {"dry_run": True, "action": "add_album", "catalog_album_id": catalog_album_id}
+        if mutator is None:
+            raise RuntimeError("Mutations are not available: no mutator configured.")
+        mutator.add_albums_to_library([catalog_album_id])
+        return {"dry_run": False, "added_album": catalog_album_id}
+
+    @mcp.tool
+    def remove_album(library_album_id: str, dry_run: bool = True) -> dict:
+        """Remove an album from your Apple Music library.
+
+        Defaults to a dry-run preview. Pass dry_run=false to APPLY the removal to your
+        real library.
+        """
+        if dry_run:
+            return {
+                "dry_run": True,
+                "action": "remove_album",
+                "library_album_id": library_album_id,
+            }
+        if mutator is None:
+            raise RuntimeError("Mutations are not available: no mutator configured.")
+        mutator.remove_album_from_library(library_album_id)
+        return {"dry_run": False, "removed_album": library_album_id}
+
+    @mcp.tool
+    def create_playlist(
+        name: str,
+        description: str | None = None,
+        track_ids: list[str] | None = None,
+        dry_run: bool = True,
+    ) -> dict:
+        """Create a playlist in your Apple Music library.
+
+        Defaults to a dry-run preview. Pass dry_run=false to actually create it.
+        """
+        if dry_run:
+            return {
+                "dry_run": True,
+                "action": "create_playlist",
+                "name": name,
+                "track_count": len(track_ids or []),
+            }
+        if mutator is None:
+            raise RuntimeError("Mutations are not available: no mutator configured.")
+        playlist = mutator.create_playlist(name, description=description, track_ids=track_ids)
+        return {"dry_run": False, "created_playlist": playlist.model_dump(mode="json")}
 
     return mcp

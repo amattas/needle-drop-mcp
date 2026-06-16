@@ -91,6 +91,9 @@ def test_server_exposes_expected_tools():
         "get_album_versions",
         "search_catalog",
         "trigger_sync",
+        "add_album",
+        "remove_album",
+        "create_playlist",
     }.issubset(names)
 
 
@@ -398,3 +401,83 @@ def test_search_catalog_tool_without_callable_errors():
 
     with pytest.raises(ToolError):
         asyncio.run(go())
+
+
+class _FakeMutator:
+    def __init__(self):
+        self.added = []
+        self.removed = []
+        self.created = []
+
+    def add_albums_to_library(self, ids):
+        self.added.append(ids)
+
+    def remove_album_from_library(self, library_album_id):
+        self.removed.append(library_album_id)
+
+    def create_playlist(self, name, *, description=None, track_ids=None):
+        self.created.append((name, description, tuple(track_ids or ())))
+        from needledrop.connectors.apple_models import LibraryPlaylist
+
+        return LibraryPlaylist(id="p.1", name=name, description=description)
+
+
+def test_add_album_tool_dry_run_does_not_mutate():
+    con = _fresh_con()
+    mut = _FakeMutator()
+    result = _call(create_server(con, mutator=mut), "add_album", {"catalog_album_id": "c.1"})
+    assert result["dry_run"] is True
+    assert mut.added == []
+
+
+def test_add_album_tool_applies_when_not_dry_run():
+    con = _fresh_con()
+    mut = _FakeMutator()
+    result = _call(
+        create_server(con, mutator=mut),
+        "add_album",
+        {"catalog_album_id": "c.1", "dry_run": False},
+    )
+    assert result["dry_run"] is False
+    assert mut.added == [["c.1"]]
+
+
+def test_remove_album_tool_applies_when_not_dry_run():
+    con = _fresh_con()
+    mut = _FakeMutator()
+    _call(
+        create_server(con, mutator=mut),
+        "remove_album",
+        {"library_album_id": "l.9", "dry_run": False},
+    )
+    assert mut.removed == ["l.9"]
+
+
+def test_create_playlist_tool_applies_when_not_dry_run():
+    con = _fresh_con()
+    mut = _FakeMutator()
+    result = _call(
+        create_server(con, mutator=mut),
+        "create_playlist",
+        {"name": "Cleanup", "track_ids": ["s.1"], "dry_run": False},
+    )
+    assert mut.created == [("Cleanup", None, ("s.1",))]
+    assert result["created_playlist"]["id"] == "p.1"
+
+
+def test_mutating_tool_without_mutator_errors_when_applying():
+    con = _fresh_con()
+    from fastmcp.exceptions import ToolError
+
+    async def go():
+        async with Client(create_server(con)) as client:
+            await client.call_tool("add_album", {"catalog_album_id": "c.1", "dry_run": False})
+
+    with pytest.raises(ToolError):
+        asyncio.run(go())
+
+
+def test_mutating_tool_dry_run_works_without_mutator():
+    con = _fresh_con()
+    result = _call(create_server(con), "remove_album", {"library_album_id": "l.9"})
+    assert result["dry_run"] is True
