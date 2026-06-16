@@ -94,6 +94,9 @@ def upsert_album(
     distinct editions (standard/deluxe/remaster) share a release-group but must stay
     separate canonical rows so each keeps its own version_class — the duplicate-album
     analysis groups these rows by release_group_mbid.
+
+    artist_id is set on INSERT and back-filled when NULL, but is NOT overwritten once
+    set — see the FK note at the back-fill statements below.
     """
     external_ids = external_ids or {}
     ext_json = _dump_external_ids(external_ids)
@@ -110,6 +113,12 @@ def upsert_album(
                 "total_tracks = COALESCE(?, total_tracks), external_ids_json = ? WHERE id = ?",
                 [title, release_group_mbid, version_class, total_tracks, ext_json, row[0]],
             )
+            # artist_id is intentionally NOT in the SET above: DuckDB 1.5.3 raises a
+            # ConstraintException when an UPDATE's SET touches an album row already
+            # referenced by tracks.album_id, even when the value is unchanged. Back-fill
+            # it in a separate statement, and only when NULL — which also means an
+            # already-set artist_id is never overwritten here. Do NOT fold this back
+            # into a COALESCE in the SET above; that reintroduces the FK error.
             if artist_id is not None:
                 con.execute(
                     "UPDATE albums SET artist_id = ? WHERE id = ? AND artist_id IS NULL",
@@ -133,6 +142,12 @@ def upsert_album(
                 [title, release_group_mbid, release_mbid, version_class, total_tracks,
                  ext_json, row[0]],
             )
+            # artist_id is intentionally NOT in the SET above: DuckDB 1.5.3 raises a
+            # ConstraintException when an UPDATE's SET touches an album row already
+            # referenced by tracks.album_id, even when the value is unchanged. Back-fill
+            # it in a separate statement, and only when NULL — which also means an
+            # already-set artist_id is never overwritten here. Do NOT fold this back
+            # into a COALESCE in the SET above; that reintroduces the FK error.
             if artist_id is not None:
                 con.execute(
                     "UPDATE albums SET artist_id = ? WHERE id = ? AND artist_id IS NULL",
@@ -201,8 +216,12 @@ def upsert_track(
             con.execute(
                 "UPDATE tracks SET title = ?, album_id = COALESCE(?, album_id), "
                 "artist_id = COALESCE(?, artist_id), isrc = COALESCE(?, isrc), "
+                "disc_number = COALESCE(?, disc_number), "
+                "track_number = COALESCE(?, track_number), "
+                "duration_ms = COALESCE(?, duration_ms), "
                 "external_ids_json = ? WHERE id = ?",
-                [title, album_id, artist_id, isrc, ext_json, row[0]],
+                [title, album_id, artist_id, isrc, disc_number, track_number, duration_ms,
+                 ext_json, row[0]],
             )
             return row[0]
 
@@ -216,8 +235,11 @@ def upsert_track(
             con.execute(
                 "UPDATE tracks SET title = ?, album_id = COALESCE(?, album_id), "
                 "artist_id = COALESCE(?, artist_id), recording_mbid = COALESCE(?, recording_mbid), "
-                "isrc = COALESCE(?, isrc), external_ids_json = ? WHERE id = ?",
-                [title, album_id, artist_id, recording_mbid, isrc, ext_json, row[0]],
+                "isrc = COALESCE(?, isrc), disc_number = COALESCE(?, disc_number), "
+                "track_number = COALESCE(?, track_number), duration_ms = COALESCE(?, duration_ms), "
+                "external_ids_json = ? WHERE id = ?",
+                [title, album_id, artist_id, recording_mbid, isrc, disc_number, track_number,
+                 duration_ms, ext_json, row[0]],
             )
             return row[0]
 

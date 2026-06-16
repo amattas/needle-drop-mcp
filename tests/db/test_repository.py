@@ -136,6 +136,21 @@ def test_upsert_track_inserts_with_recording_mbid():
     assert row == ("rec-karma", "GBAYE9700116")
 
 
+def test_upsert_track_refreshes_structural_fields_on_resync():
+    con = _con()
+    track_id = upsert_track(con, title="Song", external_ids={"apple": "s.1"})
+    # Re-upsert (same Apple id) now carrying structural metadata it lacked before.
+    same = upsert_track(
+        con, title="Song", track_number=4, disc_number=1, duration_ms=210000,
+        external_ids={"apple": "s.1"},
+    )
+    assert same == track_id
+    row = con.execute(
+        "SELECT track_number, disc_number, duration_ms FROM tracks WHERE id = ?", [track_id]
+    ).fetchone()
+    assert row == (4, 1, 210000)
+
+
 def test_record_library_item_inserts_present():
     con = _con()
     t = datetime(2026, 6, 15, 12, 0, 0)
