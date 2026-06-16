@@ -2,15 +2,46 @@
 
 from __future__ import annotations
 
+import time
 from importlib import resources
 from pathlib import Path
 
 import duckdb
 
+# DuckDB is single-writer and raises immediately on a conflicting lock (no
+# busy-timeout). open_db retries with exponential backoff to ride out transient
+# overlaps; a long-held lock still eventually raises a clear error.
+_LOCK_RETRIES = 8
+_LOCK_RETRY_BASE_DELAY = 0.2  # seconds; doubles each attempt, capped at 2s
+
 
 def connect(db_path: str | Path) -> duckdb.DuckDBPyConnection:
     """Open (creating if needed) a DuckDB database at db_path."""
     return duckdb.connect(str(db_path))
+
+
+def _connect_with_lock_retry(db_path: str | Path) -> duckdb.DuckDBPyConnection:
+    """Like connect(), but sleep-and-retry while another process holds the write lock.
+
+    Only lock conflicts are retried; other IO errors (e.g. a disk problem) raise at
+    once. After the retry budget is exhausted, raise a clear error instead of the
+    raw DuckDB lock exception.
+    """
+    delay = _LOCK_RETRY_BASE_DELAY
+    for attempt in range(_LOCK_RETRIES):
+        try:
+            return connect(db_path)
+        except duckdb.IOException as exc:
+            if "lock" not in str(exc).lower():
+                raise
+            if attempt == _LOCK_RETRIES - 1:
+                raise RuntimeError(
+                    f"Could not open {db_path}: it is locked by another process "
+                    "(another needledrop client or a running `sync`?). "
+                    "Close the other one and retry."
+                ) from exc
+            time.sleep(delay)
+            delay = min(delay * 2, 2.0)
 
 
 def init_schema(con: duckdb.DuckDBPyConnection) -> None:
@@ -66,7 +97,7 @@ def open_db(db_path: str | Path) -> duckdb.DuckDBPyConnection:
     file but does not create any tables, so commands that touch the canonical
     schema (sync, etc.) must bootstrap it first.
     """
-    con = connect(db_path)
+    con = _connect_with_lock_retry(db_path)
     init_schema(con)
     apply_migrations(con, resources.files("needledrop.db").joinpath("migrations"))
     return con

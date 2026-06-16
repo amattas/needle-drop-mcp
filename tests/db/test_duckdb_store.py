@@ -101,3 +101,60 @@ def test_total_tracks_migration_upgrades_legacy_albums(tmp_path):
     assert "0001_add_albums_total_tracks" in applied
     cols = [r[1] for r in con.execute("PRAGMA table_info('albums')").fetchall()]
     assert "total_tracks" in cols
+
+
+def test_open_db_retries_on_lock_then_succeeds(tmp_path, monkeypatch):
+    import duckdb
+
+    import needledrop.db.duckdb_store as store
+
+    monkeypatch.setattr(store.time, "sleep", lambda *_: None)  # don't actually wait
+    real_connect = store.connect
+    calls = {"n": 0}
+
+    def flaky(path):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise duckdb.IOException("Could not set lock on file: Conflicting lock is held")
+        return real_connect(path)
+
+    monkeypatch.setattr(store, "connect", flaky)
+    con = store.open_db(tmp_path / "x.duckdb")
+    assert calls["n"] == 2  # retried once, then succeeded
+    assert con.execute("SELECT count(*) FROM artists").fetchone()[0] == 0
+
+
+def test_open_db_raises_clear_error_when_lock_persists(tmp_path, monkeypatch):
+    import duckdb
+    import pytest
+
+    import needledrop.db.duckdb_store as store
+
+    monkeypatch.setattr(store.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(
+        store,
+        "connect",
+        lambda path: (_ for _ in ()).throw(
+            duckdb.IOException("Could not set lock on file: Conflicting lock is held")
+        ),
+    )
+    with pytest.raises(RuntimeError, match="locked by another process"):
+        store.open_db(tmp_path / "x.duckdb")
+
+
+def test_open_db_does_not_retry_non_lock_io_error(tmp_path, monkeypatch):
+    import duckdb
+    import pytest
+
+    import needledrop.db.duckdb_store as store
+
+    calls = {"n": 0}
+
+    def disk_error(path):
+        calls["n"] += 1
+        raise duckdb.IOException("disk is full")
+
+    monkeypatch.setattr(store, "connect", disk_error)
+    with pytest.raises(duckdb.IOException):
+        store.open_db(tmp_path / "x.duckdb")
+    assert calls["n"] == 1  # non-lock IO errors are not retried
