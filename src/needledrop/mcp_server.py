@@ -1,11 +1,12 @@
-"""Read-only MCP server exposing NeedleDrop's library intelligence.
+"""MCP server exposing NeedleDrop's library intelligence.
 
 `create_server(con)` builds a FastMCP instance whose tools are closures over a
-single open DuckDB connection. The tools are read-only with respect to Apple
-Music; the only writes performed are to the LOCAL DuckDB (cleanup findings, and
-the opt-in `trigger_sync` re-pull). Catalog browse is read-only too: the
-`search_catalog` tool reads the Apple Music catalog via an injected callable.
-Apple-mutating tools are deferred to a later plan.
+single open DuckDB connection. Most tools are read-only; the only writes are to
+the LOCAL DuckDB (cleanup findings, the opt-in `trigger_sync` re-pull). Catalog
+browse (`search_catalog`) reads the Apple Music catalog via an injected callable.
+The Apple-library-mutating tools (`add_album`, `remove_album`, `create_playlist`)
+default to a dry-run preview and only apply when called with `dry_run=false` and a
+`mutator` is injected.
 
 stdio transport speaks MCP over stdout — never print() to stdout from here.
 """
