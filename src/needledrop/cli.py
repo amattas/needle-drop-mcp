@@ -114,7 +114,7 @@ def serve() -> None:
     server = create_server(
         con, sync_runner=sync_runner, catalog_search=catalog_search, mutator=_LazyMutator()
     )
-    server.run(show_banner=False)
+    server.run(transport="stdio", show_banner=False)
 
 
 def main() -> None:

@@ -19,7 +19,7 @@ def test_serve_builds_and_runs_server():
     assert open_db_mock.called
     assert create_server_mock.called
     # The server must be run over stdio with the banner suppressed.
-    server.run.assert_called_once_with(show_banner=False)
+    server.run.assert_called_once_with(transport="stdio", show_banner=False)
     # A sync_runner must be wired in so trigger_sync works at runtime.
     assert "sync_runner" in create_server_mock.call_args.kwargs
 
