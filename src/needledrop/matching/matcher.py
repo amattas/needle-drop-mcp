@@ -51,7 +51,7 @@ def match_album(
         return MatchResult(mbid=None, confidence=0.0, method=MatchMethod.NONE)
     if query.upc:
         row = con.execute(
-            "SELECT rg.gid FROM mb_release r "
+            "SELECT CAST(rg.gid AS VARCHAR) FROM mb_release r "
             "JOIN mb_release_group rg ON r.release_group = rg.id "
             "WHERE r.barcode = ? LIMIT 1",
             [query.upc],
@@ -64,7 +64,7 @@ def match_album(
         artist_name=query.artist_name,
         target=normalize_name(get_album_base_title(query.title)),
         sql=(
-            "SELECT DISTINCT rg.gid, rg.name FROM mb_release_group rg "
+            "SELECT DISTINCT CAST(rg.gid AS VARCHAR), rg.name FROM mb_release_group rg "
             "JOIN mb_artist_credit_name acn ON rg.artist_credit = acn.artist_credit "
             "JOIN mb_artist a ON acn.artist = a.id "
             "WHERE lower(strip_accents(a.name)) = ?"
@@ -82,7 +82,7 @@ def match_track(
         return MatchResult(mbid=None, confidence=0.0, method=MatchMethod.NONE)
     if query.isrc:
         row = con.execute(
-            "SELECT rec.gid FROM mb_isrc i "
+            "SELECT CAST(rec.gid AS VARCHAR) FROM mb_isrc i "
             "JOIN mb_recording rec ON i.recording = rec.id "
             "WHERE i.isrc = ? LIMIT 1",
             [query.isrc],
@@ -95,7 +95,7 @@ def match_track(
         artist_name=query.artist_name,
         target=normalize_name(query.title),
         sql=(
-            "SELECT DISTINCT rec.gid, rec.name FROM mb_recording rec "
+            "SELECT DISTINCT CAST(rec.gid AS VARCHAR), rec.name FROM mb_recording rec "
             "JOIN mb_artist_credit_name acn ON rec.artist_credit = acn.artist_credit "
             "JOIN mb_artist a ON acn.artist = a.id "
             "WHERE lower(strip_accents(a.name)) = ?"

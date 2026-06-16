@@ -19,19 +19,19 @@ WITH owned AS (
 owned_artists AS (
     SELECT DISTINCT acn.artist AS artist_id
     FROM owned o
-    JOIN mb_release_group rg ON o.gid = rg.gid
+    JOIN mb_release_group rg ON o.gid = CAST(rg.gid AS VARCHAR)
     JOIN mb_artist_credit_name acn ON rg.artist_credit = acn.artist_credit
     JOIN mb_artist ar ON acn.artist = ar.id
     WHERE ar.gid <> ?
 )
-SELECT DISTINCT rg.gid, rg.name, ar.name
+SELECT DISTINCT CAST(rg.gid AS VARCHAR), rg.name, ar.name
 FROM owned_artists oa
 JOIN mb_artist ar ON ar.id = oa.artist_id
 JOIN mb_artist_credit_name acn ON acn.artist = oa.artist_id
 JOIN mb_release_group rg ON rg.artist_credit = acn.artist_credit
 JOIN mb_release_group_primary_type pt ON rg.type = pt.id
 WHERE pt.name = 'Album'
-  AND rg.gid NOT IN (SELECT gid FROM owned)
+  AND CAST(rg.gid AS VARCHAR) NOT IN (SELECT gid FROM owned)
   AND NOT EXISTS (
       SELECT 1 FROM mb_release_group_secondary_type_join j
       JOIN mb_release_group_secondary_type st ON j.secondary_type = st.id

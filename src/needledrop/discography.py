@@ -43,7 +43,8 @@ def get_artist_collection(con: duckdb.DuckDBPyConnection, artist_mbid: str) -> l
     if not table_exists(con, "mb_release_group"):
         return []
     rows = con.execute(
-        "SELECT DISTINCT rg.gid, rg.name, COALESCE(pt.name, 'Unknown') AS primary_type "
+        "SELECT DISTINCT CAST(rg.gid AS VARCHAR), rg.name, "
+        "COALESCE(pt.name, 'Unknown') AS primary_type "
         "FROM mb_artist ar "
         "JOIN mb_artist_credit_name acn ON acn.artist = ar.id "
         "JOIN mb_release_group rg ON rg.artist_credit = acn.artist_credit "
@@ -74,7 +75,7 @@ def get_album_versions(
     if not table_exists(con, "mb_release_group"):
         return []
     rows = con.execute(
-        "SELECT r.gid, r.name, r.barcode, "
+        "SELECT CAST(r.gid AS VARCHAR), r.name, r.barcode, "
         "  (SELECT sum(m.track_count) FROM mb_medium m WHERE m.release = r.id) AS track_count "
         "FROM mb_release_group rg JOIN mb_release r ON r.release_group = rg.id "
         "WHERE rg.gid = ? "
@@ -129,7 +130,7 @@ def get_song_detail(con: duckdb.DuckDBPyConnection, recording_mbid: str) -> dict
                 "owned": gid in owned,
             }
             for gid, name, primary_type in con.execute(
-                "SELECT DISTINCT rg.gid, rg.name, COALESCE(pt.name, 'Unknown') "
+                "SELECT DISTINCT CAST(rg.gid AS VARCHAR), rg.name, COALESCE(pt.name, 'Unknown') "
                 "FROM mb_recording rec "
                 "JOIN mb_track t ON t.recording = rec.id "
                 "JOIN mb_medium m ON t.medium = m.id "

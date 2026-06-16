@@ -54,3 +54,46 @@ def test_owning_all_studio_albums_yields_nothing():
     _own_album(con, apple_id="l.1", title="Hybrid Theory", rg_mbid="rg-ht")
     _own_album(con, apple_id="l.2", title="Meteora", rg_mbid="rg-met")
     assert find_missing_core_albums(con) == []
+
+
+def test_handles_uuid_gid_columns():
+    # Real MusicBrainz materializes mb_*.gid as UUID. The owned-vs-catalog comparison
+    # uses `NOT IN`, which (unlike `=`) won't auto-cast UUID vs our VARCHAR mbids — so
+    # gid is CAST to VARCHAR. Regression for the BinderException this raised on a real dump.
+    con = connect(":memory:")
+    init_schema(con)
+    con.execute("CREATE TABLE mb_artist (id INTEGER, gid UUID, name VARCHAR, sort_name VARCHAR)")
+    con.execute(
+        "CREATE TABLE mb_artist_credit_name "
+        "(artist_credit INTEGER, position INTEGER, artist INTEGER, "
+        "name VARCHAR, join_phrase VARCHAR)"
+    )
+    con.execute(
+        "CREATE TABLE mb_release_group "
+        "(id INTEGER, gid UUID, name VARCHAR, artist_credit INTEGER, type INTEGER)"
+    )
+    con.execute("CREATE TABLE mb_release_group_primary_type (id INTEGER, name VARCHAR)")
+    con.execute("CREATE TABLE mb_release_group_secondary_type (id INTEGER, name VARCHAR)")
+    con.execute(
+        "CREATE TABLE mb_release_group_secondary_type_join "
+        "(release_group INTEGER, secondary_type INTEGER)"
+    )
+    con.execute("INSERT INTO mb_release_group_primary_type VALUES (1, 'Album')")
+    con.execute(
+        "INSERT INTO mb_artist VALUES (1, '11111111-1111-1111-1111-111111111111', 'Muse', 'Muse')"
+    )
+    con.execute("INSERT INTO mb_artist_credit_name VALUES (10, 0, 1, 'Muse', '')")
+    con.execute(
+        "INSERT INTO mb_release_group VALUES "
+        "(100, '22222222-2222-2222-2222-222222222222', 'Absolution', 10, 1)"
+    )
+    con.execute(
+        "INSERT INTO mb_release_group VALUES "
+        "(101, '33333333-3333-3333-3333-333333333333', 'Black Holes and Revelations', 10, 1)"
+    )
+    _own_album(con, apple_id="l.1", title="Absolution",
+               rg_mbid="22222222-2222-2222-2222-222222222222")
+    findings = find_missing_core_albums(con)
+    assert [f.recommendation.payload["release_group_mbid"] for f in findings] == [
+        "33333333-3333-3333-3333-333333333333"
+    ]

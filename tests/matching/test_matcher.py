@@ -130,6 +130,35 @@ def test_match_album_without_musicbrainz_degrades_to_no_match():
     assert result.candidates == []
 
 
+def test_match_album_returns_str_mbid_with_uuid_gid_columns():
+    # Real MusicBrainz materializes gid as a UUID column; the matcher must return a
+    # plain str mbid (gid is CAST to VARCHAR), not a uuid.UUID. Regression guard:
+    # the other fixtures seed gid as VARCHAR, which hid the UUID/VARCHAR mismatch.
+    c = duckdb.connect(":memory:")
+    c.execute("CREATE TABLE mb_artist (id INTEGER, gid UUID, name VARCHAR, sort_name VARCHAR)")
+    c.execute(
+        "CREATE TABLE mb_artist_credit_name "
+        "(artist_credit INTEGER, position INTEGER, artist INTEGER, "
+        "name VARCHAR, join_phrase VARCHAR)"
+    )
+    c.execute(
+        "CREATE TABLE mb_release_group "
+        "(id INTEGER, gid UUID, name VARCHAR, artist_credit INTEGER, type INTEGER)"
+    )
+    c.execute(
+        "INSERT INTO mb_artist VALUES (1, '11111111-1111-1111-1111-111111111111', 'Muse', 'Muse')"
+    )
+    c.execute("INSERT INTO mb_artist_credit_name VALUES (10, 0, 1, 'Muse', '')")
+    c.execute(
+        "INSERT INTO mb_release_group VALUES "
+        "(100, '22222222-2222-2222-2222-222222222222', 'Absolution', 10, 1)"
+    )
+    result = match_album(c, AlbumQuery(title="Absolution", artist_name="Muse"))
+    assert result.method == MatchMethod.FUZZY
+    assert result.mbid == "22222222-2222-2222-2222-222222222222"
+    assert isinstance(result.mbid, str)
+
+
 def test_match_track_without_musicbrainz_degrades_to_no_match():
     from needledrop.matching.matcher import TrackQuery, match_track
 
