@@ -64,16 +64,6 @@ def import_musicbrainz(settings: Settings, *, http=None) -> dict:
         latest = dumps.resolve_latest(
             http.get(f"{settings.mb_dump_base_url.rstrip('/')}/LATEST").raise_for_status().text
         )
-        seq = int(
-            http.get(dumps.fullexport_url(settings.mb_dump_base_url, latest, "SCHEMA_SEQUENCE"))
-            .raise_for_status()
-            .text.strip()
-        )
-        tag = schema_sql.tag_for_schema_sequence(seq)  # fail-loud before the big download
-        ddl_texts = [
-            http.get(url).raise_for_status().text
-            for url in schema_sql.ddl_file_urls(settings.mb_server_raw_base, tag)
-        ]
         sums = dumps.parse_sha256sums(
             http.get(dumps.fullexport_url(settings.mb_dump_base_url, latest, "SHA256SUMS"))
             .raise_for_status()
@@ -86,6 +76,15 @@ def import_musicbrainz(settings: Settings, *, http=None) -> dict:
         )
         dumps.verify_sha256(tarball, sums, "mbdump.tar.bz2")
         mbdump_dir = dumps.extract_tarball(tarball, data_dir / latest / "extracted")
+        # MetaBrainz no longer publishes a standalone SCHEMA_SEQUENCE file in the
+        # export directory; it ships inside mbdump.tar.bz2 (at the root, beside
+        # mbdump/). Read it from the extracted dump, then fetch the matching DDL.
+        seq = dumps.read_schema_sequence(mbdump_dir.parent / "SCHEMA_SEQUENCE")
+        tag = schema_sql.tag_for_schema_sequence(seq)
+        ddl_texts = [
+            http.get(url).raise_for_status().text
+            for url in schema_sql.ddl_file_urls(settings.mb_server_raw_base, tag)
+        ]
         table_files = [
             (name, f"/dump/mbdump/{path.name}")
             for name, path in dumps.list_table_files(mbdump_dir)
