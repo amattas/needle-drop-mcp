@@ -4,7 +4,7 @@
 
 > **SAFETY GATE:** This plan adds the only operations in NeedleDrop that **write to the user's real Apple Music library** (add album, remove album, create playlist). Every mutating MCP tool defaults to a **dry-run preview** and only performs a real change when called explicitly with `dry_run=false`. Do not weaken that default.
 
-**Goal:** Add Apple Music library mutations — add a catalog album, remove a library album, create a playlist — as connector methods and dry-run-by-default MCP tools, with the mutating connector injected into the server the same way `sync_runner`/`catalog_search` are.
+**Goal:** Add Apple Music library mutations — add a catalog album, remove a library album, create a playlist — as connector methods and dry-run-by-default MCP tools, with the mutating connector injected into the server the same way `sync_runner`/`catalog_search` are; plus two read-only consolidation lookups (`get_song_detail`, `get_album_detail`) that give the LLM the context to decide what to keep, remove, or add.
 
 **Architecture:** Write methods live on `AppleMusicConnector` (the read-only `MusicConnector` base stays read-only so existing fake connectors keep working). The MCP server gains an injected `mutator` (duck-typed object exposing the three write methods); the `serve` CLI wires a lazy proxy over the real connector. Each mutating tool takes `dry_run: bool = True`: with `dry_run` it returns a preview and never touches Apple or the mutator; with `dry_run=false` it calls the mutator. No `mutator` injected → a real (non-dry-run) call raises. Mutations act on Apple only; the local DuckDB reconciles on the next `sync`.
 
@@ -423,6 +423,359 @@ Expected: clean.
 ```bash
 git add src/needledrop/mcp_server.py src/needledrop/cli.py tests/test_mcp_server.py tests/test_cli_serve.py
 git commit -m "feat: add dry-run-by-default mutating MCP tools (add/remove album, create playlist)"
+```
+
+---
+
+## Task 3: Consolidation lookups — `get_song_detail`, `get_album_detail`
+
+**Files:**
+- Modify: `src/needledrop/discography.py` (append; reuses `get_album_versions`, `_owned_release_group_mbids`, `table_exists` already in the module)
+- Test: `tests/test_discography.py`
+
+These read-only lookups give the LLM the context to make consolidation decisions. `get_song_detail` answers "where is this recording" (owned albums containing it + the release-groups it appears on per MusicBrainz). `get_album_detail` answers "show me this album's duplicate set" (every owned edition of the release-group, with the Apple library id needed to remove it + completeness, plus all available editions).
+
+Verified mb_* columns (reuse from `missing_albums.py`/`discography.py`, plus): `mb_recording(id, gid)`, `mb_track(id, recording, medium)`, `mb_medium(id, release, track_count)`, `mb_release(id, gid, release_group)`, `mb_release_group(id, gid, name, type)`, `mb_release_group_primary_type(id, name)`.
+
+- [ ] **Step 1: Write the failing tests**
+
+Add to `tests/test_discography.py`:
+
+```python
+from needledrop.discography import get_album_detail, get_song_detail  # extend existing import
+
+
+def _seed_song_detail(con):
+    """A recording owned on an owned album, plus MB placements on two release-groups."""
+    con.execute(
+        "INSERT INTO albums (title, release_group_mbid, external_ids_json) "
+        "VALUES ('OK Computer', 'rg-okc', json_object('apple', 'la.okc'))"
+    )
+    album_id = con.execute("SELECT id FROM albums WHERE title = 'OK Computer'").fetchone()[0]
+    con.execute(
+        "INSERT INTO library_items "
+        "(service, service_item_id, item_type, canonical_id, status) "
+        "VALUES ('apple_music', 'la.okc', 'album', ?, 'present')",
+        [album_id],
+    )
+    con.execute(
+        "INSERT INTO tracks (title, recording_mbid, album_id) VALUES ('Lucky', 'rec-lucky', ?)",
+        [album_id],
+    )
+    # MB: the recording appears on two release-groups (the album + a compilation).
+    con.execute("CREATE TABLE mb_recording (id INTEGER, gid VARCHAR)")
+    con.execute("CREATE TABLE mb_track (id INTEGER, recording INTEGER, medium INTEGER)")
+    con.execute("CREATE TABLE mb_medium (id INTEGER, release INTEGER, track_count INTEGER)")
+    con.execute("CREATE TABLE mb_release (id INTEGER, gid VARCHAR, release_group INTEGER)")
+    con.execute(
+        "CREATE TABLE mb_release_group "
+        "(id INTEGER, gid VARCHAR, name VARCHAR, type INTEGER)"
+    )
+    con.execute("CREATE TABLE mb_release_group_primary_type (id INTEGER, name VARCHAR)")
+    con.execute("INSERT INTO mb_recording VALUES (1, 'rec-lucky')")
+    con.execute("INSERT INTO mb_release_group_primary_type VALUES (1, 'Album')")
+    con.execute("INSERT INTO mb_release_group VALUES (10, 'rg-okc', 'OK Computer', 1)")
+    con.execute("INSERT INTO mb_release_group VALUES (11, 'rg-comp', 'Best Of', 1)")
+    con.execute("INSERT INTO mb_release VALUES (20, 'rel-okc', 10)")
+    con.execute("INSERT INTO mb_release VALUES (21, 'rel-comp', 11)")
+    con.execute("INSERT INTO mb_medium VALUES (30, 20, 12)")
+    con.execute("INSERT INTO mb_medium VALUES (31, 21, 20)")
+    con.execute("INSERT INTO mb_track VALUES (40, 1, 30)")
+    con.execute("INSERT INTO mb_track VALUES (41, 1, 31)")
+
+
+def test_get_song_detail_reports_library_albums_and_mb_placements(tmp_path):
+    con = connect(tmp_path / "library.duckdb")
+    init_schema(con)
+    _seed_song_detail(con)
+    detail = get_song_detail(con, "rec-lucky")
+    assert [a["title"] for a in detail["library_albums"]] == ["OK Computer"]
+    appears = {a["release_group_mbid"]: a for a in detail["appears_on"]}
+    assert set(appears) == {"rg-okc", "rg-comp"}
+    assert appears["rg-okc"]["owned"] is True   # owned via the library album
+    assert appears["rg-comp"]["owned"] is False
+
+
+def test_get_song_detail_without_mb_still_lists_library_albums(tmp_path):
+    con = connect(tmp_path / "library.duckdb")
+    init_schema(con)
+    con.execute(
+        "INSERT INTO albums (title, external_ids_json) "
+        "VALUES ('OK Computer', json_object('apple', 'la.okc'))"
+    )
+    album_id = con.execute("SELECT id FROM albums").fetchone()[0]
+    con.execute(
+        "INSERT INTO library_items "
+        "(service, service_item_id, item_type, canonical_id, status) "
+        "VALUES ('apple_music', 'la.okc', 'album', ?, 'present')",
+        [album_id],
+    )
+    con.execute(
+        "INSERT INTO tracks (title, recording_mbid, album_id) VALUES ('Lucky', 'rec-lucky', ?)",
+        [album_id],
+    )
+    detail = get_song_detail(con, "rec-lucky")
+    assert [a["title"] for a in detail["library_albums"]] == ["OK Computer"]
+    assert detail["appears_on"] == []  # no mb_* tables
+
+
+def _seed_album_detail(con):
+    """Two owned editions of one release-group (the duplicate set) + MB editions."""
+    for title, version, total, apple, owned_tracks in [
+        ("OK Computer", "standard", 12, "la.std", 2),
+        ("OK Computer (Deluxe)", "deluxe", 23, "la.dlx", 23),
+    ]:
+        con.execute(
+            "INSERT INTO albums (title, release_group_mbid, version_class, total_tracks, "
+            "external_ids_json) VALUES (?, 'rg-okc', ?, ?, json_object('apple', ?))",
+            [title, version, total, apple],
+        )
+        album_id = con.execute("SELECT id FROM albums WHERE title = ?", [title]).fetchone()[0]
+        con.execute(
+            "INSERT INTO library_items "
+            "(service, service_item_id, item_type, canonical_id, status) "
+            "VALUES ('apple_music', ?, 'album', ?, 'present')",
+            [apple, album_id],
+        )
+        for i in range(owned_tracks):
+            con.execute(
+                "INSERT INTO tracks (title, album_id) VALUES (?, ?)", [f"{title}-{i}", album_id]
+            )
+            tid = con.execute("SELECT max(id) FROM tracks").fetchone()[0]
+            con.execute(
+                "INSERT INTO library_items "
+                "(service, service_item_id, item_type, canonical_id, status) "
+                "VALUES ('apple_music', ?, 'track', ?, 'present')",
+                [f"s.{apple}.{i}", tid],
+            )
+
+
+def test_get_album_detail_shows_owned_editions_for_consolidation(tmp_path):
+    con = connect(tmp_path / "library.duckdb")
+    init_schema(con)
+    _seed_album_detail(con)
+    detail = get_album_detail(con, "rg-okc")
+    editions = {e["title"]: e for e in detail["owned_editions"]}
+    assert set(editions) == {"OK Computer", "OK Computer (Deluxe)"}
+    assert editions["OK Computer"]["apple_album_id"] == "la.std"
+    assert editions["OK Computer"]["total_tracks"] == 12
+    assert editions["OK Computer"]["owned_track_count"] == 2   # incomplete edition
+    assert editions["OK Computer (Deluxe)"]["owned_track_count"] == 23  # complete
+    # available_versions reuses get_album_versions (empty here without mb_release).
+    assert detail["available_versions"] == []
+```
+
+- [ ] **Step 2: Run to verify they fail**
+
+Run: `/opt/homebrew/Caskroom/miniforge/base/envs/needledrop/bin/python -m pytest tests/test_discography.py -q -k "song_detail or album_detail"`
+Expected: FAIL (`ImportError`).
+
+- [ ] **Step 3: Implement (append to `src/needledrop/discography.py`)**
+
+```python
+def get_song_detail(con: duckdb.DuckDBPyConnection, recording_mbid: str) -> dict:
+    """Where a recording lives: owned library albums containing it, plus the
+    release-groups it appears on (MusicBrainz), each ownership-flagged.
+
+    Returns {recording_mbid, library_albums, appears_on}. `appears_on` is [] without mb_*.
+    """
+    library_albums = [
+        {
+            "album_id": r[0],
+            "title": r[1],
+            "release_group_mbid": r[2],
+            "version_class": r[3],
+        }
+        for r in con.execute(
+            "SELECT DISTINCT al.id, al.title, al.release_group_mbid, al.version_class "
+            "FROM tracks tr "
+            "JOIN albums al ON tr.album_id = al.id "
+            "JOIN library_items li ON li.canonical_id = al.id "
+            "  AND li.item_type = 'album' AND li.status = 'present' "
+            "WHERE tr.recording_mbid = ? "
+            "ORDER BY al.title",
+            [recording_mbid],
+        ).fetchall()
+    ]
+    appears_on: list[dict] = []
+    if table_exists(con, "mb_recording"):
+        owned = _owned_release_group_mbids(con)
+        appears_on = [
+            {
+                "release_group_mbid": gid,
+                "title": name,
+                "primary_type": primary_type,
+                "owned": gid in owned,
+            }
+            for gid, name, primary_type in con.execute(
+                "SELECT DISTINCT rg.gid, rg.name, COALESCE(pt.name, 'Unknown') "
+                "FROM mb_recording rec "
+                "JOIN mb_track t ON t.recording = rec.id "
+                "JOIN mb_medium m ON t.medium = m.id "
+                "JOIN mb_release r ON m.release = r.id "
+                "JOIN mb_release_group rg ON r.release_group = rg.id "
+                "LEFT JOIN mb_release_group_primary_type pt ON rg.type = pt.id "
+                "WHERE rec.gid = ? "
+                "ORDER BY rg.name",
+                [recording_mbid],
+            ).fetchall()
+        ]
+    return {
+        "recording_mbid": recording_mbid,
+        "library_albums": library_albums,
+        "appears_on": appears_on,
+    }
+
+
+def get_album_detail(con: duckdb.DuckDBPyConnection, release_group_mbid: str) -> dict:
+    """Consolidation view of a release-group: the owned editions you hold (the duplicate
+    set) with each one's Apple library id + completeness, plus all available editions.
+
+    Returns {release_group_mbid, owned_editions, available_versions}. owned_editions each:
+    {album_id, apple_album_id, title, version_class, total_tracks, owned_track_count}.
+    `available_versions` reuses get_album_versions (MusicBrainz; [] without mb_*).
+    """
+    owned_editions = [
+        {
+            "album_id": r[0],
+            "apple_album_id": r[1],
+            "title": r[2],
+            "version_class": r[3],
+            "total_tracks": r[4],
+            "owned_track_count": r[5],
+        }
+        for r in con.execute(
+            "SELECT a.id, json_extract_string(a.external_ids_json, '$.apple') AS apple_id, "
+            "a.title, a.version_class, a.total_tracks, ("
+            "  SELECT count(*) FROM library_items lit JOIN tracks t ON lit.canonical_id = t.id "
+            "  WHERE lit.status = 'present' AND lit.item_type = 'track' AND t.album_id = a.id"
+            ") AS owned_tracks "
+            "FROM library_items li JOIN albums a ON li.canonical_id = a.id "
+            "WHERE li.status = 'present' AND li.item_type = 'album' "
+            "AND a.release_group_mbid = ? "
+            "ORDER BY a.title",
+            [release_group_mbid],
+        ).fetchall()
+    ]
+    return {
+        "release_group_mbid": release_group_mbid,
+        "owned_editions": owned_editions,
+        "available_versions": get_album_versions(con, release_group_mbid),
+    }
+```
+
+- [ ] **Step 4: Run to verify pass**
+
+Run: `/opt/homebrew/Caskroom/miniforge/base/envs/needledrop/bin/python -m pytest tests/test_discography.py -q`
+Expected: PASS.
+
+- [ ] **Step 5: Lint + commit**
+
+```bash
+git add src/needledrop/discography.py tests/test_discography.py
+git commit -m "feat: add get_song_detail and get_album_detail consolidation lookups"
+```
+
+---
+
+## Task 4: Consolidation-lookup MCP tools
+
+**Files:**
+- Modify: `src/needledrop/mcp_server.py`
+- Test: `tests/test_mcp_server.py`
+
+- [ ] **Step 1: Write the failing tests**
+
+Add to `tests/test_mcp_server.py`:
+
+```python
+def test_get_album_detail_tool_returns_owned_editions():
+    con = _fresh_con()
+    for title, apple in [("OK Computer", "la.std"), ("OK Computer (Deluxe)", "la.dlx")]:
+        con.execute(
+            "INSERT INTO albums (title, release_group_mbid, external_ids_json) "
+            "VALUES (?, 'rg-okc', json_object('apple', ?))",
+            [title, apple],
+        )
+        album_id = con.execute("SELECT id FROM albums WHERE title = ?", [title]).fetchone()[0]
+        con.execute(
+            "INSERT INTO library_items "
+            "(service, service_item_id, item_type, canonical_id, status) "
+            "VALUES ('apple_music', ?, 'album', ?, 'present')",
+            [apple, album_id],
+        )
+    detail = _call(create_server(con), "get_album_detail", {"release_group_mbid": "rg-okc"})
+    titles = {e["title"] for e in detail["owned_editions"]}
+    assert titles == {"OK Computer", "OK Computer (Deluxe)"}
+    assert {e["apple_album_id"] for e in detail["owned_editions"]} == {"la.std", "la.dlx"}
+
+
+def test_get_song_detail_tool_returns_library_albums():
+    con = _fresh_con()
+    con.execute(
+        "INSERT INTO albums (title, external_ids_json) "
+        "VALUES ('OK Computer', json_object('apple', 'la.okc'))"
+    )
+    album_id = con.execute("SELECT id FROM albums").fetchone()[0]
+    con.execute(
+        "INSERT INTO library_items "
+        "(service, service_item_id, item_type, canonical_id, status) "
+        "VALUES ('apple_music', 'la.okc', 'album', ?, 'present')",
+        [album_id],
+    )
+    con.execute(
+        "INSERT INTO tracks (title, recording_mbid, album_id) VALUES ('Lucky', 'rec-lucky', ?)",
+        [album_id],
+    )
+    detail = _call(create_server(con), "get_song_detail", {"recording_mbid": "rec-lucky"})
+    assert [a["title"] for a in detail["library_albums"]] == ["OK Computer"]
+    assert detail["appears_on"] == []
+```
+
+Also extend `test_server_exposes_expected_tools` to add `"get_song_detail"`, `"get_album_detail"`.
+
+- [ ] **Step 2: Run to verify they fail**
+
+Run: `/opt/homebrew/Caskroom/miniforge/base/envs/needledrop/bin/python -m pytest tests/test_mcp_server.py -q -k "song_detail or album_detail or expected_tools"`
+Expected: FAIL.
+
+- [ ] **Step 3: Implement**
+
+In `src/needledrop/mcp_server.py`, add aliased imports:
+
+```python
+from needledrop.discography import get_album_detail as _get_album_detail
+from needledrop.discography import get_song_detail as _get_song_detail
+```
+
+Register two tools inside `create_server` (place after `get_album_versions`):
+
+```python
+    @mcp.tool
+    def get_song_detail(recording_mbid: str) -> dict:
+        """Where a recording lives: owned library albums + release-groups it appears on."""
+        return _get_song_detail(con, recording_mbid)
+
+    @mcp.tool
+    def get_album_detail(release_group_mbid: str) -> dict:
+        """Consolidation view: owned editions of a release-group (with Apple ids +
+        completeness) and all available editions, to decide what to keep/remove/add."""
+        return _get_album_detail(con, release_group_mbid)
+```
+
+- [ ] **Step 4: Run tests + full suite + lint (CI-parity gate)**
+
+Run: `/opt/homebrew/Caskroom/miniforge/base/envs/needledrop/bin/python -m pytest -q`
+Expected: PASS.
+
+Run: `/opt/homebrew/Caskroom/miniforge/base/envs/needledrop/bin/python -m ruff check .`
+Expected: clean.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/needledrop/mcp_server.py tests/test_mcp_server.py
+git commit -m "feat: add consolidation-lookup MCP tools (get_song_detail, get_album_detail)"
 ```
 
 ---
