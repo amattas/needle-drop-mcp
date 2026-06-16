@@ -17,6 +17,9 @@ dist/
 .env
 mb-dumps/
 
+# Secrets — never commit (MusicKit .p8 private key, etc.)
+*.p8
+
 # Docs (Docusaurus) — node_modules and generated output; package-lock.json is tracked
 website/node_modules/
 website/build/
