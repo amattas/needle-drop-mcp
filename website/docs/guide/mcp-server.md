@@ -3,12 +3,12 @@ sidebar_position: 4
 ---
 # MCP Server
 
-`needledrop serve` runs NeedleDrop as a [Model Context
+`needledrop mcp` runs NeedleDrop as a [Model Context
 Protocol](https://modelcontextprotocol.io) server over **stdio**, exposing your
 library and MusicBrainz authority as tools an LLM can call.
 
 ```bash
-needledrop serve
+needledrop mcp
 ```
 
 The process speaks MCP on stdin/stdout, so you don't run it directly in a
@@ -24,7 +24,7 @@ Most clients take a command to spawn and communicate with over stdio. For
   "mcpServers": {
     "needledrop": {
       "command": "needledrop",
-      "args": ["serve"],
+      "args": ["mcp"],
       "env": {
         "NEEDLEDROP_DB_PATH": "/absolute/path/to/library.duckdb"
       }

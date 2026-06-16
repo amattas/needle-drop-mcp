@@ -3,7 +3,7 @@ sidebar_position: 2
 ---
 # MCP Tools
 
-The tools `needledrop serve` exposes to an MCP client. All read tools operate on
+The tools `needledrop mcp` exposes to an MCP client. All read tools operate on
 your local DuckDB (and the materialized MusicBrainz authority); they're safe to
 call freely. The MusicBrainz-backed tools return empty results until you've run
 [`mb import`](../guide/musicbrainz.md).

@@ -80,7 +80,7 @@ what changed.
 ### 5. Serve to an MCP client
 
 ```bash
-needledrop serve
+needledrop mcp
 ```
 
 Runs the MCP server over stdio. Point an MCP client (such as Claude Desktop) at
@@ -96,7 +96,7 @@ and the guarded mutations. See [MCP server](mcp-server.md) for client config.
 | `auth apple login` | Occasionally (when the user token expires) |
 | `mb import` | Once, then whenever you want fresher MusicBrainz data |
 | `sync` | Recurring — whenever your library changes |
-| `serve` | Every session (or run it persistently) |
+| `mcp` | Every session (or run it persistently) |
 
 ## Where things live
 

@@ -31,7 +31,7 @@ materialized `mb_*.gid` (UUID) to VARCHAR to compare with our canonical mbids.
 - [x] **`mb import`** — real dump → ephemeral Postgres → DuckDB; 375 tables materialized (schema sequence 31).
 - [x] **Validate `mb_*` columns against the real dump** — assumptions held; found & fixed the UUID/VARCHAR `gid` mismatch.
 - [x] **Re-sync to match the library** — 12,919/16,464 matched (78%); 61 duplicate-albums, 241 duplicate-tracks, 131 compilation, 4,418 missing-core, review queue 2,070.
-- [ ] **`serve` end-to-end** — connect a real MCP client, exercise the tools, sanity-check a dry-run → apply mutation round-trip. (Last P0 item.)
+- [ ] **`mcp` end-to-end** — connect a real MCP client, exercise the tools, sanity-check a dry-run → apply mutation round-trip. (Last P0 item.)
 
 ## P1 — Known limitations & hardening (non-blocking)
 

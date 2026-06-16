@@ -33,7 +33,7 @@ dry-run-by-default tools. It is a librarian, not a player.
   <Link className="nd-card" to="/guide/mcp-server">
     <span className="nd-card-kicker">Guide</span>
     <span className="nd-card-title">MCP server</span>
-    <span className="nd-card-desc">Run <code>needledrop serve</code> and point Claude (or any MCP client) at it.</span>
+    <span className="nd-card-desc">Run <code>needledrop mcp</code> and point Claude (or any MCP client) at it.</span>
   </Link>
   <Link className="nd-card" to="/guide/cleanup">
     <span className="nd-card-kicker">Guide</span>
@@ -94,15 +94,15 @@ needledrop mb import
 needledrop sync
 
 # 5. Run the MCP server and point an MCP client at it
-needledrop serve
+needledrop mcp
 ```
 
-Then connect an MCP client (e.g. Claude Desktop) to the `needledrop serve` process
+Then connect an MCP client (e.g. Claude Desktop) to the `needledrop mcp` process
 over stdio — see the [MCP server guide](guide/mcp-server.md) — and ask it to scan
 your library, work the review queue, and propose cleanups.
 
 :::note
-Steps 1–4 are the one-time/periodic setup. Day to day you run `needledrop serve`
+Steps 1–4 are the one-time/periodic setup. Day to day you run `needledrop mcp`
 (or trigger a re-sync from the MCP client). The MusicBrainz import (step 3)
 requires Docker and a chunk of disk and time — see the [MusicBrainz guide](guide/musicbrainz.md).
 :::

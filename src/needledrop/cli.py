@@ -77,9 +77,9 @@ def sync() -> None:
     )
 
 
-@app.command("serve")
-def serve() -> None:
-    """Run the read-only MCP server over stdio."""
+@app.command("mcp")
+def mcp() -> None:
+    """Run the MCP server over stdio."""
     settings = load_settings()
     con = open_db(settings.db_path)
     state: dict = {}

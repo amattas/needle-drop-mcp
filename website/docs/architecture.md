@@ -65,7 +65,7 @@ re-scan.
 
 ## MCP layer
 
-`needledrop serve` builds a FastMCP server over stdio whose tools are thin
+`needledrop mcp` builds a FastMCP server over stdio whose tools are thin
 delegations to the layers above. Read tools query the local database directly;
 the catalog search and mutations route through the injected, lazy connector. The
 three Apple-library mutations default to a dry-run preview. See the

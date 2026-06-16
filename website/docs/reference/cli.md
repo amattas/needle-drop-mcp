@@ -15,7 +15,7 @@ Commands:
   auth apple login             Authorize Apple Music and capture the Music-User-Token
   mb import                    Build the local MusicBrainz authority
   sync                         Pull, match, and persist your Apple Music library
-  serve                        Run the MCP server over stdio
+  mcp                          Run the MCP server over stdio
 ```
 
 ## `auth apple set-credentials`
@@ -74,14 +74,14 @@ needledrop sync
 Re-run any time; it preserves prior match decisions and only re-pulls what
 changed.
 
-## `serve`
+## `mcp`
 
 Run the MCP server over stdio. An MCP client launches and communicates with this
 process; it is not meant to be used interactively in a shell. See
 [MCP server](../guide/mcp-server.md).
 
 ```bash
-needledrop serve
+needledrop mcp
 ```
 
 The connector is built lazily, so the server starts and answers read-only queries
