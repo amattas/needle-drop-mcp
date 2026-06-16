@@ -63,9 +63,60 @@ def _call(server, tool, args=None):
     return asyncio.run(go())
 
 
+class _KeepOpen:
+    """Forwards to a shared connection but makes close() a no-op, so the server's
+    per-call open/close doesn't close the test's in-memory connection."""
+
+    def __init__(self, con):
+        self._con = con
+
+    def close(self) -> None:  # noqa: D401 - per-call close is a no-op in tests
+        pass
+
+    def __getattr__(self, name):
+        return getattr(self._con, name)
+
+
+def _server(con, **kwargs):
+    """create_server wired to the shared test connection: the per-call connect
+    factory returns the same in-memory connection (kept open across calls)."""
+    return create_server(lambda: _KeepOpen(con), **kwargs)
+
+
+def test_db_tools_open_and_close_a_connection_per_call():
+    # The server must not hold DuckDB's single-writer lock between calls: each
+    # DB-backed tool opens a fresh connection via the factory and closes it when
+    # the call ends.
+    con = _fresh_con()
+    _seed(con)
+    opened = []
+
+    class _Tracked:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+        def __getattr__(self, name):
+            return getattr(con, name)
+
+    def connect():
+        tracked = _Tracked()
+        opened.append(tracked)
+        return tracked
+
+    server = create_server(connect)
+    _call(server, "get_library_summary")
+    _call(server, "list_albums")
+
+    assert len(opened) == 2  # one connection per tool call
+    assert all(t.closed for t in opened)  # each closed when the call finished
+
+
 def test_server_exposes_expected_tools():
     con = _fresh_con()
-    server = create_server(con)
+    server = _server(con)
 
     async def list_names():
         async with Client(server) as client:
@@ -102,7 +153,7 @@ def test_server_exposes_expected_tools():
 def test_get_library_summary_tool_counts_items():
     con = _fresh_con()
     _seed(con)
-    summary = _call(create_server(con), "get_library_summary")
+    summary = _call(_server(con), "get_library_summary")
     assert summary["album"] == 3
     assert summary["matched"] == 2
     assert summary["unmatched"] == 1
@@ -111,7 +162,7 @@ def test_get_library_summary_tool_counts_items():
 def test_list_albums_tool_returns_present_albums():
     con = _fresh_con()
     _seed(con)
-    albums = _call(create_server(con), "list_albums")
+    albums = _call(_server(con), "list_albums")
     titles = {a["title"] for a in albums}
     assert {"Dookie", "Dookie (Deluxe)", "Untagged Bootleg"}.issubset(titles)
 
@@ -119,7 +170,7 @@ def test_list_albums_tool_returns_present_albums():
 def test_find_duplicate_albums_tool_reports_release_group_dupes():
     con = _fresh_con()
     _seed(con)
-    findings = _call(create_server(con), "find_duplicate_albums")
+    findings = _call(_server(con), "find_duplicate_albums")
     assert len(findings) == 1
     assert findings[0]["finding_type"] == "duplicate_album"
 
@@ -127,21 +178,21 @@ def test_find_duplicate_albums_tool_reports_release_group_dupes():
 def test_list_unmatched_tool_returns_unmatched_only():
     con = _fresh_con()
     _seed(con)
-    rows = _call(create_server(con), "list_unmatched")
+    rows = _call(_server(con), "list_unmatched")
     assert [r["title"] for r in rows] == ["Untagged Bootleg"]
 
 
 def test_search_library_tool_filters_by_title():
     con = _fresh_con()
     _seed(con)
-    rows = _call(create_server(con), "search_library", {"query": "deluxe"})
+    rows = _call(_server(con), "search_library", {"query": "deluxe"})
     assert [r["title"] for r in rows] == ["Dookie (Deluxe)"]
 
 
 def test_generate_cleanup_report_tool_runs_scan_and_returns_findings():
     con = _fresh_con()
     _seed(con)
-    report = _call(create_server(con), "generate_cleanup_report")
+    report = _call(_server(con), "generate_cleanup_report")
     assert report["counts"]["duplicate_album"] == 1
     descriptions = {f["description"] for f in report["findings"]}
     assert any("versions of 'Dookie'" in d for d in descriptions)
@@ -155,7 +206,7 @@ def test_trigger_sync_tool_invokes_injected_runner():
         calls.append(True)
         return {"added": 5, "removed": 1, "present": 42}
 
-    summary = _call(create_server(con, sync_runner=runner), "trigger_sync")
+    summary = _call(_server(con, sync_runner=runner), "trigger_sync")
     assert calls == [True]
     assert summary == {"added": 5, "removed": 1, "present": 42}
 
@@ -191,14 +242,14 @@ def test_find_compilation_pollution_tool_with_mb_data():
         con, service="apple_music", service_item_id="l.comp1", item_type="album",
         canonical_id=album_id, match_method="upc", seen_at=datetime(2026, 6, 15, 12, 0, 0),
     )
-    findings = _call(create_server(con), "find_compilation_pollution")
+    findings = _call(_server(con), "find_compilation_pollution")
     assert len(findings) >= 1
     assert findings[0]["finding_type"] == "compilation_pollution"
 
 
 def test_trigger_sync_without_runner_reports_error():
     con = _fresh_con()
-    server = create_server(con)
+    server = _server(con)
 
     async def go():
         async with Client(server) as client:
@@ -234,7 +285,7 @@ def _seed_review_queue(con):
 def test_list_review_queue_tool_returns_pending_items():
     con = _fresh_con()
     _seed_review_queue(con)
-    queue = _call(create_server(con), "list_review_queue")
+    queue = _call(_server(con), "list_review_queue")
     assert len(queue) == 1
     assert queue[0]["title"] == "Kid A"
     assert [c["candidate_mbid"] for c in queue[0]["candidates"]] == ["rg-good", "rg-meh"]
@@ -246,7 +297,7 @@ def test_resolve_match_tool_links_and_clears_queue():
     chosen = con.execute(
         "SELECT id FROM match_candidates WHERE candidate_mbid = 'rg-good'"
     ).fetchone()[0]
-    server = create_server(con)
+    server = _server(con)
     result = _call(server, "resolve_match", {"candidate_id": chosen})
     assert result == {
         "library_item_id": item_id,
@@ -262,7 +313,7 @@ def test_resolve_match_tool_links_and_clears_queue():
 def test_reject_match_tool_clears_queue():
     con = _fresh_con()
     item_id, _ = _seed_review_queue(con)
-    server = create_server(con)
+    server = _server(con)
     result = _call(server, "reject_match", {"library_item_id": item_id})
     assert result == {"rejected": 2}
     assert _call(server, "list_review_queue") == []
@@ -273,7 +324,7 @@ def test_resolve_match_tool_unknown_candidate_errors():
     _seed_review_queue(con)
 
     async def go():
-        async with Client(create_server(con)) as client:
+        async with Client(_server(con)) as client:
             await client.call_tool("resolve_match", {"candidate_id": 99999})
 
     with pytest.raises(ToolError):
@@ -291,7 +342,7 @@ def test_find_duplicate_tracks_tool_reports_dupes():
             "VALUES ('apple_music', ?, 'track', ?, 'present')",
             [sid, track_id],
         )
-    findings = _call(create_server(con), "find_duplicate_tracks")
+    findings = _call(_server(con), "find_duplicate_tracks")
     assert len(findings) == 1
     assert findings[0]["finding_type"] == "duplicate_track"
 
@@ -337,7 +388,7 @@ def test_find_missing_core_albums_tool_with_mb_data():
         match_method="upc",
         seen_at=datetime(2026, 6, 15, 12, 0, 0),
     )
-    findings = _call(create_server(con), "find_missing_core_albums")
+    findings = _call(_server(con), "find_missing_core_albums")
     assert len(findings) >= 1
     assert findings[0]["finding_type"] == "missing_core_album"
 
@@ -355,7 +406,7 @@ def test_get_artist_collection_tool_returns_discography():
     con.execute("INSERT INTO mb_artist_credit_name VALUES (1, 10)")
     con.execute("INSERT INTO mb_release_group_primary_type VALUES (1, 'Album')")
     con.execute("INSERT INTO mb_release_group VALUES (100, 'rg-kida', 'Kid A', 10, 1)")
-    result = _call(create_server(con), "get_artist_collection", {"artist_mbid": "artist-rh"})
+    result = _call(_server(con), "get_artist_collection", {"artist_mbid": "artist-rh"})
     assert [r["title"] for r in result] == ["Kid A"]
     assert result[0]["owned"] is False
 
@@ -372,7 +423,7 @@ def test_get_album_versions_tool_returns_editions():
     con.execute("INSERT INTO mb_release VALUES (200, 'rel-kida-std', 'Kid A', '0123', 100)")
     con.execute("INSERT INTO mb_medium VALUES (200, 10)")
     result = _call(
-        create_server(con), "get_album_versions", {"release_group_mbid": "rg-kida"}
+        _server(con), "get_album_versions", {"release_group_mbid": "rg-kida"}
     )
     assert [r["title"] for r in result] == ["Kid A"]
     assert result[0]["track_count"] == 10
@@ -387,7 +438,7 @@ def test_search_catalog_tool_uses_injected_callable():
         calls.append((term, types, limit))
         return {"albums": [{"id": "a.1", "name": "Dookie"}], "songs": []}
 
-    server = create_server(con, catalog_search=catalog_search)
+    server = _server(con, catalog_search=catalog_search)
     result = _call(server, "search_catalog", {"term": "dookie"})
     assert calls == [("dookie", ("albums", "songs"), 25)]
     assert result["albums"][0]["name"] == "Dookie"
@@ -398,7 +449,7 @@ def test_search_catalog_tool_without_callable_errors():
     from fastmcp.exceptions import ToolError
 
     async def go():
-        async with Client(create_server(con)) as client:
+        async with Client(_server(con)) as client:
             await client.call_tool("search_catalog", {"term": "x"})
 
     with pytest.raises(ToolError):
@@ -427,7 +478,7 @@ class _FakeMutator:
 def test_add_album_tool_dry_run_does_not_mutate():
     con = _fresh_con()
     mut = _FakeMutator()
-    result = _call(create_server(con, mutator=mut), "add_album", {"catalog_album_id": "c.1"})
+    result = _call(_server(con, mutator=mut), "add_album", {"catalog_album_id": "c.1"})
     assert result["dry_run"] is True
     assert mut.added == []
 
@@ -436,7 +487,7 @@ def test_add_album_tool_applies_when_not_dry_run():
     con = _fresh_con()
     mut = _FakeMutator()
     result = _call(
-        create_server(con, mutator=mut),
+        _server(con, mutator=mut),
         "add_album",
         {"catalog_album_id": "c.1", "dry_run": False},
     )
@@ -448,7 +499,7 @@ def test_remove_album_tool_applies_when_not_dry_run():
     con = _fresh_con()
     mut = _FakeMutator()
     _call(
-        create_server(con, mutator=mut),
+        _server(con, mutator=mut),
         "remove_album",
         {"library_album_id": "l.9", "dry_run": False},
     )
@@ -459,7 +510,7 @@ def test_create_playlist_tool_applies_when_not_dry_run():
     con = _fresh_con()
     mut = _FakeMutator()
     result = _call(
-        create_server(con, mutator=mut),
+        _server(con, mutator=mut),
         "create_playlist",
         {"name": "Cleanup", "track_ids": ["s.1"], "dry_run": False},
     )
@@ -472,7 +523,7 @@ def test_mutating_tool_without_mutator_errors_when_applying():
     from fastmcp.exceptions import ToolError
 
     async def go():
-        async with Client(create_server(con)) as client:
+        async with Client(_server(con)) as client:
             await client.call_tool("add_album", {"catalog_album_id": "c.1", "dry_run": False})
 
     with pytest.raises(ToolError):
@@ -481,7 +532,7 @@ def test_mutating_tool_without_mutator_errors_when_applying():
 
 def test_mutating_tool_dry_run_works_without_mutator():
     con = _fresh_con()
-    result = _call(create_server(con), "remove_album", {"library_album_id": "l.9"})
+    result = _call(_server(con), "remove_album", {"library_album_id": "l.9"})
     assert result["dry_run"] is True
 
 
@@ -500,7 +551,7 @@ def test_get_album_detail_tool_returns_owned_editions():
             "VALUES ('apple_music', ?, 'album', ?, 'present')",
             [apple, album_id],
         )
-    detail = _call(create_server(con), "get_album_detail", {"release_group_mbid": "rg-okc"})
+    detail = _call(_server(con), "get_album_detail", {"release_group_mbid": "rg-okc"})
     titles = {e["title"] for e in detail["owned_editions"]}
     assert titles == {"OK Computer", "OK Computer (Deluxe)"}
     assert {e["apple_album_id"] for e in detail["owned_editions"]} == {"la.std", "la.dlx"}
@@ -523,6 +574,6 @@ def test_get_song_detail_tool_returns_library_albums():
         "INSERT INTO tracks (title, recording_mbid, album_id) VALUES ('Lucky', 'rec-lucky', ?)",
         [album_id],
     )
-    detail = _call(create_server(con), "get_song_detail", {"recording_mbid": "rec-lucky"})
+    detail = _call(_server(con), "get_song_detail", {"recording_mbid": "rec-lucky"})
     assert [a["title"] for a in detail["library_albums"]] == ["OK Computer"]
     assert detail["appears_on"] == []

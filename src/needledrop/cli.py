@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 
@@ -81,8 +82,14 @@ def sync() -> None:
 def mcp() -> None:
     """Run the MCP server over stdio."""
     settings = load_settings()
-    con = open_db(settings.db_path)
     state: dict = {}
+
+    # DB-backed tools open a fresh connection per call and close it when done, so
+    # the server holds DuckDB's single-writer lock only during a query — never at
+    # startup (the MCP handshake stays lock-free) or while idle (the CLI and other
+    # clients can use the database between calls).
+    def _connect():
+        return open_db(settings.db_path)
 
     def _connector() -> AppleMusicConnector:
         if "connector" not in state:
@@ -90,7 +97,8 @@ def mcp() -> None:
         return state["connector"]
 
     def sync_runner() -> dict:
-        return sync_library(_connector(), con, now=datetime.now())
+        with closing(open_db(settings.db_path)) as con:
+            return sync_library(_connector(), con, now=datetime.now())
 
     def catalog_search(term: str, types: tuple[str, ...], limit: int) -> dict:
         connector = _connector()
@@ -112,7 +120,7 @@ def mcp() -> None:
             )
 
     server = create_server(
-        con, sync_runner=sync_runner, catalog_search=catalog_search, mutator=_LazyMutator()
+        _connect, sync_runner=sync_runner, catalog_search=catalog_search, mutator=_LazyMutator()
     )
     server.run(transport="stdio", show_banner=False)
 

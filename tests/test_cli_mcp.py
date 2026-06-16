@@ -16,8 +16,10 @@ def test_serve_builds_and_runs_server():
         create_server_mock.return_value = server
         result = runner.invoke(app, ["mcp"])
     assert result.exit_code == 0
-    assert open_db_mock.called
     assert create_server_mock.called
+    # create_server gets a connect() factory (DB opened per call, not at startup).
+    assert callable(create_server_mock.call_args.args[0])
+    assert not open_db_mock.called  # startup is lock-free; no DB opened yet
     # The server must be run over stdio with the banner suppressed.
     server.run.assert_called_once_with(transport="stdio", show_banner=False)
     # A sync_runner must be wired in so trigger_sync works at runtime.
