@@ -30,23 +30,52 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
 <body>
 <h1>Authorizing {app_name} with Apple Music…</h1>
 <p id="status">Loading MusicKit…</p>
+<button id="authorize" style="display:none;font-size:1rem;padding:0.6rem 1rem;">
+  Authorize Apple Music
+</button>
 <script src="https://js-cdn.music.apple.com/musickit/v3/musickit.js"></script>
 <script>
-document.addEventListener('musickitloaded', function () {{
-  MusicKit.configure({{
-    developerToken: '{developer_token}', app: {{ name: '{app_name}', build: '1.0' }},
-  }});
-  MusicKit.getInstance().authorize().then(function (musicUserToken) {{
-    document.getElementById('status').textContent = 'Authorized. You can close this tab.';
-    return fetch('{callback_path}', {{
-      method: 'POST',
-      headers: {{ 'Content-Type': 'application/x-www-form-urlencoded' }},
-      body: 'musicUserToken=' + encodeURIComponent(musicUserToken),
+function setStatus(text) {{ document.getElementById('status').textContent = text; }}
+
+async function init() {{
+  try {{
+    // MusicKit v3 configure() is async — await it before getInstance(), or
+    // getInstance() races ahead and throws while the page hangs on "Loading".
+    await MusicKit.configure({{
+      developerToken: '{developer_token}',
+      app: {{ name: '{app_name}', build: '1.0' }},
     }});
-  }}).catch(function (err) {{
-    document.getElementById('status').textContent = 'Authorization failed: ' + err;
+  }} catch (err) {{
+    setStatus('MusicKit configure failed: ' + err);
+    return;
+  }}
+  // Authorize on an explicit click: browsers block the Apple sign-in popup when
+  // authorize() is invoked without a user gesture.
+  var button = document.getElementById('authorize');
+  button.style.display = 'inline-block';
+  setStatus('Ready — click the button to authorize Apple Music.');
+  button.addEventListener('click', function () {{
+    button.disabled = true;
+    setStatus('Opening Apple Music sign-in…');
+    MusicKit.getInstance().authorize().then(function (musicUserToken) {{
+      setStatus('Authorized. You can close this tab.');
+      return fetch('{callback_path}', {{
+        method: 'POST',
+        headers: {{ 'Content-Type': 'application/x-www-form-urlencoded' }},
+        body: 'musicUserToken=' + encodeURIComponent(musicUserToken),
+      }});
+    }}).catch(function (err) {{
+      button.disabled = false;
+      setStatus('Authorization failed: ' + err);
+    }});
   }});
-}});
+}}
+
+// Handle both load orderings: MusicKit may already be present when this runs,
+// or it may fire `musickitloaded` afterwards. (Listening only for the event
+// misses it if the script finished first.)
+if (window.MusicKit) {{ init(); }}
+else {{ document.addEventListener('musickitloaded', init); }}
 </script>
 </body>
 </html>
