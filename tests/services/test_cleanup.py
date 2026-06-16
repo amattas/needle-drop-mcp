@@ -58,3 +58,21 @@ def test_ignore_finding_removes_from_open():
     fid = get_findings(con)[0].id
     ignore_finding(con, fid, now=datetime(2026, 6, 16, 9, 0, 0))
     assert get_findings(con) == []
+
+
+def test_run_cleanup_scan_includes_duplicate_tracks(tmp_path):
+    from needledrop.db.duckdb_store import connect, init_schema
+    from needledrop.services.cleanup import run_cleanup_scan
+    con = connect(tmp_path / "library.duckdb")
+    init_schema(con)
+    for sid in ("s.1", "s.2"):
+        con.execute("INSERT INTO tracks (title, recording_mbid) VALUES ('Creep', 'rec-creep')")
+        track_id = con.execute("SELECT max(id) FROM tracks").fetchone()[0]
+        con.execute(
+            "INSERT INTO library_items "
+            "(service, service_item_id, item_type, canonical_id, status) "
+            "VALUES ('apple_music', ?, 'track', ?, 'present')",
+            [sid, track_id],
+        )
+    counts = run_cleanup_scan(con, now=datetime(2026, 6, 15))
+    assert counts.get("duplicate_track") == 1

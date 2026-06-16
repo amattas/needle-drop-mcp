@@ -78,6 +78,9 @@ def test_server_exposes_expected_tools():
         "find_duplicate_albums",
         "find_compilation_pollution",
         "find_missing_core_albums",
+        "find_duplicate_tracks",
+        "find_partial_albums",
+        "find_single_replaced",
         "generate_cleanup_report",
         "list_unmatched",
         "search_library",
@@ -267,6 +270,22 @@ def test_resolve_match_tool_unknown_candidate_errors():
 
     with pytest.raises(ToolError):
         asyncio.run(go())
+
+
+def test_find_duplicate_tracks_tool_reports_dupes():
+    con = _fresh_con()
+    for sid in ("s.1", "s.2"):
+        con.execute("INSERT INTO tracks (title, recording_mbid) VALUES ('Creep', 'rec-creep')")
+        track_id = con.execute("SELECT max(id) FROM tracks").fetchone()[0]
+        con.execute(
+            "INSERT INTO library_items "
+            "(service, service_item_id, item_type, canonical_id, status) "
+            "VALUES ('apple_music', ?, 'track', ?, 'present')",
+            [sid, track_id],
+        )
+    findings = _call(create_server(con), "find_duplicate_tracks")
+    assert len(findings) == 1
+    assert findings[0]["finding_type"] == "duplicate_track"
 
 
 def test_find_missing_core_albums_tool_with_mb_data():

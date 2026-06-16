@@ -20,10 +20,13 @@ from fastmcp import FastMCP
 from needledrop.analysis.compilation_pollution import (
     find_compilation_pollution as _find_compilation_pollution,
 )
+from needledrop.analysis.duplicate_tracks import find_duplicate_tracks as _find_duplicate_tracks
 from needledrop.analysis.duplicates import find_duplicate_albums as _find_duplicate_albums
 from needledrop.analysis.missing_albums import (
     find_missing_core_albums as _find_missing_core_albums,
 )
+from needledrop.analysis.partial_albums import find_partial_albums as _find_partial_albums
+from needledrop.analysis.single_replaced import find_single_replaced as _find_single_replaced
 from needledrop.db.repository import (
     get_findings as _get_findings,
 )
@@ -94,6 +97,21 @@ def create_server(
     def find_missing_core_albums() -> list[dict]:
         """Studio albums by artists you own that are missing from your library."""
         return [f.model_dump(mode="json") for f in _find_missing_core_albums(con)]
+
+    @mcp.tool
+    def find_duplicate_tracks() -> list[dict]:
+        """Tracks you own more than one copy of (same recording identity)."""
+        return [f.model_dump(mode="json") for f in _find_duplicate_tracks(con)]
+
+    @mcp.tool
+    def find_partial_albums() -> list[dict]:
+        """Albums you added but own only some of the tracks from."""
+        return [f.model_dump(mode="json") for f in _find_partial_albums(con)]
+
+    @mcp.tool
+    def find_single_replaced() -> list[dict]:
+        """Standalone singles you also own on a full album (redundant)."""
+        return [f.model_dump(mode="json") for f in _find_single_replaced(con)]
 
     @mcp.tool
     def generate_cleanup_report() -> dict:
