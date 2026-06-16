@@ -136,6 +136,30 @@ def test_upsert_track_inserts_with_recording_mbid():
     assert row == ("rec-karma", "GBAYE9700116")
 
 
+def test_upsert_album_backfill_skips_fk_referenced_row():
+    # Regression (C1): a NULL-artist album referenced by a track must not crash on a
+    # later upsert that supplies an artist_id (DuckDB 1.5.3 forbids updating a
+    # FK-referenced albums row). The referenced row keeps its NULL artist_id.
+    con = _con()
+    artist_id = upsert_artist(con, canonical_name="Various")
+    aid = upsert_album(con, title="Various Hits", artist_id=None,
+                       external_ids={"apple": "a.x"})
+    upsert_track(con, title="Song", album_id=aid, recording_mbid="rec-1",
+                 external_ids={"apple": "s.1"})
+    same = upsert_album(con, title="Various Hits", artist_id=artist_id,
+                        external_ids={"apple": "a.x"})  # must not raise
+    assert same == aid
+    assert con.execute(
+        "SELECT artist_id FROM albums WHERE id = ?", [aid]
+    ).fetchone()[0] is None
+    # An UNREFERENCED null-artist album still gets its artist_id back-filled.
+    bid = upsert_album(con, title="Lonely", artist_id=None, external_ids={"apple": "a.y"})
+    upsert_album(con, title="Lonely", artist_id=artist_id, external_ids={"apple": "a.y"})
+    assert con.execute(
+        "SELECT artist_id FROM albums WHERE id = ?", [bid]
+    ).fetchone()[0] == artist_id
+
+
 def test_upsert_track_refreshes_structural_fields_on_resync():
     con = _con()
     track_id = upsert_track(con, title="Song", external_ids={"apple": "s.1"})

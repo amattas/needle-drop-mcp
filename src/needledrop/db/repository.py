@@ -77,6 +77,19 @@ def upsert_artist(
     ).fetchone()[0]
 
 
+def _album_is_referenced(con: duckdb.DuckDBPyConnection, album_id: int) -> bool:
+    """True if any track references this album.
+
+    DuckDB 1.5.3 raises a ConstraintException on any UPDATE that sets a column on an
+    `albums` row already referenced by `tracks.album_id`, so `upsert_album` must not
+    back-fill `artist_id` on a referenced row.
+    """
+    return (
+        con.execute("SELECT 1 FROM tracks WHERE album_id = ? LIMIT 1", [album_id]).fetchone()
+        is not None
+    )
+
+
 def upsert_album(
     con: duckdb.DuckDBPyConnection,
     *,
@@ -116,10 +129,12 @@ def upsert_album(
             # artist_id is intentionally NOT in the SET above: DuckDB 1.5.3 raises a
             # ConstraintException when an UPDATE's SET touches an album row already
             # referenced by tracks.album_id, even when the value is unchanged. Back-fill
-            # it in a separate statement, and only when NULL — which also means an
-            # already-set artist_id is never overwritten here. Do NOT fold this back
+            # it in a separate statement, only when NULL, and only when the row is not
+            # yet FK-referenced by a track (a referenced row cannot have artist_id
+            # updated at all under DuckDB 1.5.3). A referenced album keeps its existing
+            # (possibly NULL) artist_id — harmless to the analyses. Do NOT fold this back
             # into a COALESCE in the SET above; that reintroduces the FK error.
-            if artist_id is not None:
+            if artist_id is not None and not _album_is_referenced(con, row[0]):
                 con.execute(
                     "UPDATE albums SET artist_id = ? WHERE id = ? AND artist_id IS NULL",
                     [artist_id, row[0]],
@@ -145,10 +160,12 @@ def upsert_album(
             # artist_id is intentionally NOT in the SET above: DuckDB 1.5.3 raises a
             # ConstraintException when an UPDATE's SET touches an album row already
             # referenced by tracks.album_id, even when the value is unchanged. Back-fill
-            # it in a separate statement, and only when NULL — which also means an
-            # already-set artist_id is never overwritten here. Do NOT fold this back
+            # it in a separate statement, only when NULL, and only when the row is not
+            # yet FK-referenced by a track (a referenced row cannot have artist_id
+            # updated at all under DuckDB 1.5.3). A referenced album keeps its existing
+            # (possibly NULL) artist_id — harmless to the analyses. Do NOT fold this back
             # into a COALESCE in the SET above; that reintroduces the FK error.
-            if artist_id is not None:
+            if artist_id is not None and not _album_is_referenced(con, row[0]):
                 con.execute(
                     "UPDATE albums SET artist_id = ? WHERE id = ? AND artist_id IS NULL",
                     [artist_id, row[0]],
